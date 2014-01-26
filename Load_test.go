@@ -36,11 +36,11 @@ func getkeyval(item string) (key, val string) {
 func BombardMsg(s *cluster.SerVer){
 
 	
-	for x:=0;x<1000;x++ {
+	for x:=0;x<5000;x++ {
 	rand.Seed(time.Now().Unix())
 	y:=(rand.Intn(4)-1)
 	s.Outbox() <- &cluster.Envelope{Pid:y , Msg: "hello there"}
-	time.Sleep(15 * time.Millisecond)
+	//time.Sleep(15 * time.Millisecond)
 	
 	}
 }
