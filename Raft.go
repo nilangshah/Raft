@@ -3,9 +3,9 @@ package Raft
 import (
 	"flag"
 	"fmt"
+	"github.com/nilangshah/Raft/cluster"
 	"os"
 	"strings"
-	"github.com/nilangshah/Raft/cluster"
 )
 
 var GoPath string
@@ -35,7 +35,7 @@ func main() {
 
 	// parse argument flags and get this server's id into myid
 	var input string
-	path := GoPath+"/src/github.com/nilangshah/Raft/cluster/config.json"
+	path := GoPath + "/src/github.com/nilangshah/Raft/cluster/config.json"
 	server := cluster.New(*myid, path)
 	// the returned server object obeys the Server interface above.
 	fmt.Scanln(&input)

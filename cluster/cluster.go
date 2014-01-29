@@ -3,9 +3,9 @@ package cluster
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 	zmq "github.com/pebbe/zmq4"
 	"io/ioutil"
+	"time"
 )
 
 const (
@@ -57,33 +57,33 @@ type Server interface {
 	Inbox() chan *Envelope
 }
 
-func (s SerVer) Outbox() chan *Envelope {
+func (s serVer) Outbox() chan *Envelope {
 
 	return s.out
 }
-func (s SerVer) Inbox() chan *Envelope {
+func (s serVer) Inbox() chan *Envelope {
 
 	return s.in
 }
 
-func (s SerVer) Pid() int {
+func (s serVer) Pid() int {
 	return s.pid
 }
 
-func (s SerVer) Peers() []int {
+func (s serVer) Peers() []int {
 	return s.peers
 }
 
-type SerVer struct {
+type serVer struct {
 	pid     int
 	peers   []int
 	in      chan *Envelope
 	out     chan *Envelope
-	Addr    map[int]string
+	addr    map[int]string
 	sockets map[int]*zmq.Socket
 }
 
-func New(myid int, fileName string) *SerVer {
+func New(myid int, fileName string) Server {
 
 	file, e := ioutil.ReadFile(fileName)
 	if e != nil {
@@ -91,14 +91,15 @@ func New(myid int, fileName string) *SerVer {
 	}
 
 	json.Unmarshal(file, &jsontype)
-	s := &SerVer{
-		pid:   123,
-		peers: make([]int, len(jsontype.Object.Servers)-1),
-		in:    make(chan *Envelope),
-		out:   make(chan *Envelope),
-		Addr:  map[int]string{},
-		sockets : map[int]*zmq.Socket{},
+	s := &serVer{
+		pid:     123,
+		peers:   make([]int, len(jsontype.Object.Servers)-1),
+		in:      make(chan *Envelope),
+		out:     make(chan *Envelope),
+		addr:    map[int]string{},
+		sockets: map[int]*zmq.Socket{},
 	}
+
 	count := 0
 	for i := range jsontype.Object.Servers {
 		if jsontype.Object.Servers[i].Id == myid {
@@ -107,15 +108,16 @@ func New(myid int, fileName string) *SerVer {
 			s.peers[count] = jsontype.Object.Servers[i].Id
 			count++
 		}
-		s.Addr[jsontype.Object.Servers[i].Id] = jsontype.Object.Servers[i].Host
+		s.addr[jsontype.Object.Servers[i].Id] = jsontype.Object.Servers[i].Host
 
 	}
+	//fmt.Println("server start:",s.Pid())
 	go ListenIn(s)
 	go SendOut(s)
 	return s
 }
 
-func SendOut(s *SerVer) {
+func SendOut(s *serVer) {
 
 	for {
 		select {
@@ -133,36 +135,36 @@ func SendOut(s *SerVer) {
 						output, err := zmq.NewSocket(zmq.DEALER)
 						if err != nil {
 							panic("Socket Error " + err.Error())
-						}else{
-						s.sockets[s.peers[i]]=output						
+						} else {
+							s.sockets[s.peers[i]] = output
 						}
-						err = output.Connect("tcp://" + s.Addr[s.peers[i]])
+						err = output.Connect("tcp://" + s.addr[s.peers[i]])
 						if err != nil {
 							panic("Connect error " + err.Error())
-						} 
-						
+						}
+
 						go Connect_Send(output, envelope)
 					}
 				}
 			} else {
 				envelope.Pid = s.Pid()
 				sock, ok := s.sockets[s.Pid()]
-					if ok {
-						go Connect_Send(sock, envelope)
+				if ok {
+					go Connect_Send(sock, envelope)
+				} else {
+					output, err := zmq.NewSocket(zmq.DEALER)
+					if err != nil {
+						panic("Socket Error " + err.Error())
 					} else {
-						output, err := zmq.NewSocket(zmq.DEALER)
-						if err != nil {
-							panic("Socket Error " + err.Error())
-						}else{
-						s.sockets[s.Pid()]=output
-						}
-						err = output.Connect("tcp://" + s.Addr[envelope.Pid])
-						if err != nil {
-							panic("Connect error " + err.Error())
-						} 
-						go Connect_Send(output, envelope)
+						s.sockets[s.Pid()] = output
 					}
-				//go Connect_Send(s.Addr[envelope.Pid], envelope)
+					err = output.Connect("tcp://" + s.addr[envelope.Pid])
+					if err != nil {
+						panic("Connect error " + err.Error())
+					}
+					go Connect_Send(output, envelope)
+				}
+				//go Connect_Send(s.addr[envelope.Pid], envelope)
 
 			}
 		case <-time.After(10 * time.Second):
@@ -183,13 +185,13 @@ func Connect_Send(output *zmq.Socket, env *Envelope) {
 
 }
 
-func ListenIn(s *SerVer) {
-	//fmt.Println("recieveing on ", s.Addr[s.Pid()])
+func ListenIn(s *serVer) {
+	//fmt.Println("recieveing on ", s.addr[s.Pid()])
 	input, err := zmq.NewSocket(zmq.DEALER)
 	if err != nil {
 		panic("Socket: " + err.Error())
 	}
-	err = input.Bind("tcp://" + s.Addr[s.Pid()])
+	err = input.Bind("tcp://" + s.addr[s.Pid()])
 	if err != nil {
 		panic("Socket: " + err.Error())
 
