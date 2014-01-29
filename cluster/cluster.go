@@ -2,7 +2,7 @@ package cluster
 
 import (
 	"encoding/json"
-	"fmt"
+	//"fmt"
 	zmq "github.com/pebbe/zmq4"
 	"io/ioutil"
 	"time"
@@ -118,72 +118,96 @@ func New(myid int, fileName string) Server {
 }
 
 func SendOut(s *serVer) {
-
+	//count1:=0
+	//sock := make(*zmq.Socket)
 	for {
+		//	if count1%1000==0{fmt.Println(count1)}
 		select {
 		case envelope := <-(s.Outbox()):
-
+			//count1++
 			if envelope.Pid == BROADCAST {
 				envelope.Pid = s.Pid()
 				for i := range s.Peers() {
 					sock, ok := s.sockets[s.peers[i]]
 					if ok {
-						//fmt.Println("socket reused")
-						go Connect_Send(sock, envelope)
+						b, err := json.Marshal(envelope)
+						if err != nil {
+							panic("Json error: " + err.Error())
+						}
+						sock.Send(string(b), 0)
+
 					} else {
-						//fmt.Println("socket needed")
-						output, err := zmq.NewSocket(zmq.DEALER)
+						sock, err := zmq.NewSocket(zmq.DEALER)
 						if err != nil {
 							panic("Socket Error " + err.Error())
 						} else {
-							s.sockets[s.peers[i]] = output
+							s.sockets[s.peers[i]] = sock
 						}
-						err = output.Connect("tcp://" + s.addr[s.peers[i]])
+						err = sock.Connect("tcp://" + s.addr[s.peers[i]])
 						if err != nil {
 							panic("Connect error " + err.Error())
 						}
 
-						go Connect_Send(output, envelope)
+						b, err := json.Marshal(envelope)
+						if err != nil {
+							panic("Json error: " + err.Error())
+						}
+						sock.Send(string(b), 0)
+
 					}
+
 				}
 			} else {
 				envelope.Pid = s.Pid()
 				sock, ok := s.sockets[s.Pid()]
 				if ok {
-					go Connect_Send(sock, envelope)
+					//go Connect_Send(sock, envelope)
+					b, err := json.Marshal(envelope)
+					if err != nil {
+						panic("Json error: " + err.Error())
+					}
+					sock.Send(string(b), 0)
 				} else {
-					output, err := zmq.NewSocket(zmq.DEALER)
+					sock, err := zmq.NewSocket(zmq.DEALER)
 					if err != nil {
 						panic("Socket Error " + err.Error())
 					} else {
-						s.sockets[s.Pid()] = output
+						s.sockets[s.Pid()] = sock
 					}
-					err = output.Connect("tcp://" + s.addr[envelope.Pid])
+					err = sock.Connect("tcp://" + s.addr[envelope.Pid])
 					if err != nil {
 						panic("Connect error " + err.Error())
 					}
-					go Connect_Send(output, envelope)
+					//go Connect_Send(output, envelope)
+					b, err := json.Marshal(envelope)
+					if err != nil {
+						panic("Json error: " + err.Error())
+					}
+					sock.Send(string(b), 0)
+
 				}
+
 				//go Connect_Send(s.addr[envelope.Pid], envelope)
 
 			}
 		case <-time.After(10 * time.Second):
-			fmt.Println("shud close all socket")
+			//			fmt.Println("shud close all socket")
 
 		}
 	}
 
 }
 
+/*
 func Connect_Send(output *zmq.Socket, env *Envelope) {
 
 	b, err := json.Marshal(env)
 	if err != nil {
 		panic("Json error: " + err.Error())
 	}
-	output.SendMessage(b)
+	output.Send(string(b),0)
 
-}
+}*/
 
 func ListenIn(s *serVer) {
 	//fmt.Println("recieveing on ", s.addr[s.Pid()])
@@ -197,11 +221,11 @@ func ListenIn(s *serVer) {
 
 	}
 	for {
-		msg, err := input.RecvMessage(0)
+		msg, err := input.Recv(0)
 		if err != nil {
 		}
 		env := new(Envelope)
-		err = json.Unmarshal([]byte(msg[0]), &env)
+		err = json.Unmarshal([]byte(msg), &env)
 		if err != nil {
 			panic("Json error:" + err.Error())
 		}

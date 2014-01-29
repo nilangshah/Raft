@@ -1,10 +1,11 @@
 package Raft
 
 import (
-	//"fmt"
+	"fmt"
 	"github.com/nilangshah/Raft/cluster"
 	"math/rand"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -30,13 +31,18 @@ func getkeyval(item string) (key, val string) {
 
 func BombardMsg(s cluster.Server) {
 
-	for x := 0; x < 5000; x++ {
+	for x := 0; x < 100000; x++ {
+		//fmt.Println("x:",x)
 		rand.Seed(time.Now().Unix())
-		y := (rand.Intn(4) - 1)
-		s.Outbox() <- &cluster.Envelope{Pid: y, Msg: "hello there"}
-		if x%10 == 0 {
-			time.Sleep(10 * time.Millisecond)
-		}
+		y := (rand.Intn(3))
+		msg := "hello there " + strconv.Itoa(s.Pid()) + "." + strconv.Itoa(x)
+		if y > 0 {
+		} //fmt.Println("length is :",len(s.Outbox()))
+		s.Outbox() <- &cluster.Envelope{Pid: y, Msg: msg}
+		//if x%10 == 0 {
+		//		time.Sleep(50*time.Millisecond)
+		//	}
+
 	}
 }
 func TestLoad(t *testing.T) {
@@ -53,18 +59,22 @@ func TestLoad(t *testing.T) {
 		go BombardMsg(server[i-1])
 
 	}
-
+	count := 0
 	for {
 		select {
 
 		case _ = <-server[0].Inbox():
+			count++
 			//fmt.Printf( "%d Received msg from %d: '%s'\n",1 ,envelope.Pid, envelope.Msg)
 		case _ = <-server[1].Inbox():
+			count++
 			//fmt.Printf( "%d Received msg from %d: '%s'\n",2 ,envelope.Pid, envelope.Msg)
 		case _ = <-server[2].Inbox():
-			//fmt.Printf( "%d Received msg from %d: '%s'\n",2 ,envelope.Pid, envelope.Msg)
+			count++
+			//fmt.Printf( "%d Received msg from %d: '%s'\n",3 ,envelope.Pid, envelope.Msg)
 
 		case <-time.After(2 * time.Second):
+			fmt.Println(count, "        ")
 			os.Exit(0)
 
 		}
