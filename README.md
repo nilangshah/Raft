@@ -1,7 +1,19 @@
 Raft
 ====
 
-Raft Consensus in go
+This is a Go implementation of the Raft distributed consensus protocol. Raft is a protocol by which a cluster of nodes can maintain in sync through the use of a replicated log.
+
+For more details on Raft, you can read In Search of an Understandable Consensus Algorithm by Diego Ongaro and John Ousterhout.
+
+2 main events of Raft:
+
+
+    1.Leader Election
+    2.Replicated Log
+
+With these two constructs, you can build a system that can maintain state across multiple servers -- even in the event of multiple failures.
+
+[![GoDoc](https://godoc.org/github.com/nilangshah/Raft?status.png)](https://godoc.org/github.com/nilangshah/Raft)
 
 
 Zeromq and Go channels are used for server communication. 
