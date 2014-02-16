@@ -9,12 +9,15 @@ import (
 	"sync"
 	"time"
 )
+//total no of servers
+var no_of_servers int
 
-var no_of_servers int //total no of servers
-var quorum int        //no of votes need to win election
+//no of votes needed to win election
+var quorum int        
 
+//possible states of server at any point of time
 const (
-	follower  = "Follower" //possible states of server at any point of time
+	follower  = "Follower" 
 	candidate = "Candidate"
 	leader    = "Leader"
 )
@@ -28,100 +31,122 @@ const (
 )
 
 var (
-	MinimumElectionTimeoutMs int32 = 250 // min election time out - T
-
-	maximumElectionTimeoutMs = 2 * MinimumElectionTimeoutMs //max election time out -  2T
+	//min election time out - T
+	MinimumElectionTimeoutMs int32 = 250 
+	//max election time out -  2T
+	maximumElectionTimeoutMs = 2 * MinimumElectionTimeoutMs 
 )
 
-type protectedString struct { // string with mutex
+// string with mutex
+type protectedString struct { 
 	sync.RWMutex
 	value string
 }
 
-type protectedVotes struct { // bool with mutex
+// bool with mutex
+type protectedVotes struct { 
 	sync.RWMutex
 	votes map[uint64]bool
 }
 
-func (s *protectedString) Get() string { // getter method for protectedstring
+// getter method for protectedstring
+func (s *protectedString) Get() string { 
 	s.RLock()
 	defer s.RUnlock()
 	return s.value
 }
 
-func (s *protectedString) Set(value string) { // setter method for protectedstring
+// setter method for protectedstring
+func (s *protectedString) Set(value string) { 
 	s.Lock()
 	defer s.Unlock()
 	s.value = value
 }
 
-type voteResponse struct { // response of vote
+// response of vote
+type voteResponse struct { 
 	Term        uint64
-	VoteGranted bool // vote granted or not
+	// vote granted or not
+	VoteGranted bool 
 }
 
+//vote request
 type voteRequest struct {
-	Term        uint64 //
-	CandidateID uint64 //id of the candidate
+	Term        uint64 
+	//id of the candidate
+	CandidateID uint64 
 }
 
+// heartbeat msg of server
 type heartbeat struct {
-	Id      uint64 // server id
-	Term    uint64 // heartbeat msg of server
+	// server id
+	Id      uint64 
+	Term    uint64 
 	Success bool
 }
 
 type msgPass struct {
-	MsgType  int           // type of msg
+	// type of msg
+	MsgType  int           
 	Request  *voteRequest  //msgtype = 1
 	Response *voteResponse // msgtype= 2
 	Hb       heartbeat     //msgtype=3
 
 }
 
-type protectedBool struct { // mutex boolean
+// mutex boolean
+type protectedBool struct { 
 	sync.RWMutex
 	value bool
 }
 
-func (s *protectedBool) Get() bool { // getter method of bool
+// getter method of bool
+func (s *protectedBool) Get() bool { 
 	s.RLock()
 	defer s.RUnlock()
 	return s.value
 }
 
-func (s *protectedBool) Set(value bool) { // setter method of bool
+// setter method of bool
+func (s *protectedBool) Set(value bool) { 
 	s.Lock()
 	defer s.Unlock()
 	s.value = value
 }
 
-type Replicator interface { // replicator interface	
-	Term() uint64
+// replicator interface	
+type Replicator interface {
+ 	Term() uint64
 	IsLeader() bool
 	IsLeaderSet(bool)
 	Start()
 	Stop()
 }
 
+//return term of server
 func (r replicator) Term() uint64 {
 	return r.term
 }
 
+//return whether server is leader or not
 func (r replicator) IsLeader() bool {
 	return r.isLeader.Get()
 }
+
+//set server leader status
 func (r replicator) IsLeaderSet(val bool) {
 	r.isLeader.Lock()
 	defer r.isLeader.Unlock()
 	r.isLeader.value = val
 }
 
+//start the server
 func (r *replicator) Start() {
 	log.Println("server started ", r.s.Pid())
 	go r.loop()
 }
 
+// stop the server
 func (r *replicator) Stop() {
 	q := make(chan struct{})
 	r.quit <- q
@@ -129,7 +154,8 @@ func (r *replicator) Stop() {
 	log.Println("server stopped ", r.s.Pid())
 }
 
-type replicator struct { // replicator object
+// replicator object
+type replicator struct { 
 	s            cluster.Server     // server interface
 	term         uint64             // "current term number, which increases monotonically"
 	vote         uint64             // vote given to which sevrer
@@ -143,6 +169,7 @@ type replicator struct { // replicator object
 	//requestVoteChan chan requestVoteTuple
 }
 
+//create and return replicator object
 func New(server cluster.Server, fileName string) Replicator { // returns replicator interface
 	latestTerm := uint64(1)
 	r := &replicator{
@@ -185,7 +212,7 @@ func (r *replicator) loop() {
 	}
 }
 
-////////////////////////
+
 //send heartbeat to peers after each broadcast interval
 func broadcastInterval() time.Duration {
 	d := MinimumElectionTimeoutMs / 10
@@ -200,8 +227,8 @@ func (r replicator) sendHeartBeat() {
 	r.s.Outbox() <- &cluster.Envelope{Pid: -1, Msg: msg}
 }
 
-//////////////////////
-// if the state is leader
+
+// for leaderstate
 func (r *replicator) leaderSelect() {
 	if r.leader != uint64(r.s.Pid()) {
 		panic(fmt.Sprintf("leader (%d) not me (%d) when entering leaderSelect", r.leader, r.s.Pid()))
