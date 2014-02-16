@@ -46,12 +46,11 @@ Usage
  * ./configure
  * make
  * sudo make install
-
 * Checkout project from github
  * go get github.com/nilang.shah/Raft
-
 * Run tests to test Raft Package
  * go test github.com/nilangshah/Raft
-
 * Run tests to test cluster package
  * go test github.com/nilangshah/Raft/cluster
+
+Zeromq is used for massage passing. Cluster Packge is build for peer to peer massgae passing. Raft package uses it for leader election and log replication.
