@@ -11,8 +11,10 @@ before_install:
 language: go
 
 go:
-  - 1.0
-  - tip
+ - 1.1
+ - 1.2
+ - release
+ - tip
   
 script:
  - go test -v ./...  
