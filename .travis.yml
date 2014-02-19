@@ -5,9 +5,11 @@ before_install:
  -  tar -xvzf zeromq-4.0.3.tar.gz
  - cd zeromq-4.0.3/
  - ./configure
- 
-install: 
  - sudo make install
+ 
+script:
+ - make
+ 
 
 language: go
 
