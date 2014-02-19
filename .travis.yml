@@ -6,11 +6,10 @@ before_install:
  - cd zeromq-4.0.3/
  - ./configure
  - sudo make install
- 
-script:
+ - cd ..
+ - cd ..
  - make
  
-
 language: go
 
 go:
