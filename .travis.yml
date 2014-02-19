@@ -6,7 +6,8 @@ before_install:
  - cd zeromq-4.0.3/
  - ./configure
  - sudo make install
- - cd ..
+
+script: 
  - cd ..
  - make
  
