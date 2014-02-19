@@ -1,4 +1,4 @@
-before_install:
+install:
  - sudo apt-get install autoconf
  -  sudo apt-get install libtool
  - wget http://download.zeromq.org/zeromq-4.0.3.tar.gz
@@ -11,10 +11,5 @@ before_install:
 language: go
 
 go:
- - 1.1
- - 1.2
- - release
+ - 1.0
  - tip
-  
-script:
- - go test -v ./...  
