@@ -23,6 +23,7 @@ const (
 )
 
 const (
+	
 	unknownLeader = 0
 	noVote        = 0
 	RequestType   = 1 //constants 
@@ -118,6 +119,7 @@ func (s *protectedBool) Set(value bool) {
 type Replicator interface {
  	Term() uint64
 	IsLeader() bool
+	IsRunning() bool
 	IsLeaderSet(bool)
 	Start()
 	Stop()
@@ -130,9 +132,16 @@ func (r replicator) Term() uint64 {
 
 //return whether server is leader or not
 func (r replicator) IsLeader() bool {
+	r.isLeader.RLock()
+	defer r.isLeader.RUnlock()
 	return r.isLeader.Get()
 }
 
+func (r replicator) IsRunning() bool{
+	r.running.RLock()
+	defer r.running.RUnlock()
+	return r.running.Get()
+}
 //set server leader status
 func (r replicator) IsLeaderSet(val bool) {
 	r.isLeader.Lock()
@@ -296,7 +305,7 @@ func (r *replicator) leaderSelect() {
 					if r.leader != unknownLeader {
 						log.Printf("abandoning old leader=%d\n", r.leader)
 					}
-					log.Println("new leader unknown")
+					//log.Println("new leader unknown")
 					r.leader = unknownLeader
 					r.state.Set(follower)
 					return
@@ -387,6 +396,7 @@ func (r *replicator) candidateSelect() {
 		panic("known leader when entering candidateSelect")
 	}
 	if r.vote != 0 {
+		log.Println(r.s.Pid(),":",r.state)
 		panic("existing vote when entering candidateSelect")
 	}
 	r.generateVoteRequest()
@@ -450,7 +460,7 @@ func (r *replicator) candidateSelect() {
 					if r.leader != unknownLeader {
 						log.Printf("abandoning old leader=%d\n", r.leader)
 					}
-					log.Println("new leader unknown")
+					//log.Println("new leader unknown")
 					r.leader = unknownLeader
 					r.state.Set(follower)
 					return
@@ -475,7 +485,7 @@ func (r *replicator) candidateSelect() {
 						field.Set(reflect.ValueOf(value))
 					}
 				}
-				log.Println("leader is up and running ", res.Id)
+				//log.Println("leader is up and running ", res.Id)
 				stepDown := r.handleHeartbeat(res)
 				if stepDown {
 					r.leader = res.Id
@@ -516,7 +526,7 @@ func (r *replicator) candidateSelect() {
 					break
 				}
 				if res.VoteGranted {
-					log.Printf("%d voted for me\n", t.Pid)
+					//log.Printf("%d voted for me\n", t.Pid)
 					voting.Lock()
 					voting.votes[uint64(t.Pid)] = true
 					voting.Unlock()
@@ -552,7 +562,7 @@ func (r replicator) pass(voting protectedVotes) bool {
 			break
 		}
 	}
-	log.Println(voting.votes)
+	//log.Println(voting.votes)
 	//log.Println(no_of_votes,":",quorum)
 	return no_of_votes >= quorum
 
@@ -634,7 +644,7 @@ func (r *replicator) followerSelect() {
 					if r.leader != unknownLeader {
 						log.Printf("abandoning old leader=%d", r.leader)
 					}
-					log.Println("new leader unknown")
+					//log.Println("new leader unknown")
 					r.leader = unknownLeader
 				}
 			case 2:
@@ -702,7 +712,7 @@ func (r *replicator) handleRequestVote(req voteRequest) (*voteResponse, bool) {
 
 	stepDown := false
 	if req.Term > r.term {
-		log.Printf("requestVote from newer term (%d): we defer %d", req.Term, r.s.Pid())
+		//log.Printf("requestVote from newer term (%d): we defer %d", req.Term, r.s.Pid())
 		r.term = req.Term
 		r.vote = noVote
 		r.leader = unknownLeader
