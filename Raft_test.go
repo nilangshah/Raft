@@ -37,10 +37,11 @@ func TestElection_1(t *testing.T) {
 	logfilePath := GetPath() + "/src/github.com/nilangshah/Raft/log"
 	f, err := os.OpenFile(logfilePath, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
-		t.Fatalf("error opening file: %v", err)
-	}
+		//t.Fatalf("error opening file: %v", err)
+	} else{
 	defer f.Close()
 	log.SetOutput(f)
+	}
 	no_of_servers = 5
 	quorum = ((no_of_servers - 1) / 2) + 1
 	out := make(chan int)
@@ -108,10 +109,11 @@ func TestElection_2(t *testing.T){
 	logfilePath := GetPath() + "/src/github.com/nilangshah/Raft/log"
 	f, err := os.OpenFile(logfilePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
-		t.Fatalf("error opening file: %v", err)
-	}
+		//t.Fatalf("error opening file: %v", err)
+	} else{
 	defer f.Close()
 	log.SetOutput(f)
+	}
 	for count:=0;count<20;count++{
 		select{
 			case <-time.After(1*time.Second):
