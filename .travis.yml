@@ -1,13 +1,16 @@
-install:
+before_install:
  - sudo apt-get install autoconf
  -  sudo apt-get install libtool
  - wget http://download.zeromq.org/zeromq-4.0.3.tar.gz
  -  tar -xvzf zeromq-4.0.3.tar.gz
  - cd zeromq-4.0.3/
  - ./configure
- - make
  - sudo make install
 
+script: 
+ - cd ..
+ - make
+ 
 language: go
 
 go:

@@ -33,10 +33,6 @@ TODO
 Usage
 ===== 
 
-[![Build Status][buildimg]][buildurl]
-[buildimg]: https://api.travis-ci.org/nilangshah/Raft.png
-[buildurl]: https://travis-ci.org/nilangshah/Raft
-
 * We need to setup zmq 4.0.3 first
  * sudo apt-get install autoconf
  * sudo apt-get install libtool
