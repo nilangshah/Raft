@@ -6,6 +6,7 @@ before_install:
  - cd zeromq-4.0.3/
  - ./configure
  - sudo make install
+ - go get github.com/pebbe/zmq4
 
 script: 
  - cd ..
