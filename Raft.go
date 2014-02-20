@@ -22,19 +22,28 @@ const (
 	leader    = "Leader"
 )
 
+//constants
 const (
-	
+	//Leader is unknwon
 	unknownLeader = 0
+	// Have not vote anyone in perticular term
 	noVote        = 0
-	RequestType   = 1 //constants 
+	//Message type is request of vote
+	RequestType   = 1  
+	//Message type is response of vote request
 	ResponseType  = 2
+	// Message type is Heartbeat of leader
 	Heartbeat     = 3
 )
 
 var (
-	//min election time out - T
+	//min election time out - T milliseconds
+	// If follower do not hear from leader during [T-2T] time election timer will hit
+	// follower will become candidate and start new election
+	//If candidate do not hear from followers during [T-2T] time election timer will hit
+	// candidate will update term and start a fresh election 
 	MinimumElectionTimeoutMs int32 = 250 
-	//max election time out -  2T
+	//max election time out -  2T milliseconds
 	maximumElectionTimeoutMs = 2 * MinimumElectionTimeoutMs 
 )
 
@@ -115,13 +124,21 @@ func (s *protectedBool) Set(value bool) {
 	s.value = value
 }
 
-// replicator interface	
+// Replicator interface
+// Replicator is responsible for Raft leader election and Raft log replication
+// Replicator uses cluster package for commnication to other replicator instances.
 type Replicator interface {
+	// Term of this replicator 
  	Term() uint64
+	// Is this replicator leader
 	IsLeader() bool
+	// replicator is started or stopped
 	IsRunning() bool
+	// method to set replicator leader
 	IsLeaderSet(bool)
+	// method to start replicator
 	Start()
+	// method to stop replicator
 	Stop()
 }
 
@@ -178,7 +195,7 @@ type replicator struct {
 	//requestVoteChan chan requestVoteTuple
 }
 
-//create and return replicator object
+// Create replicator object and return replicator interface for it
 func New(server cluster.Server, fileName string) Replicator { // returns replicator interface
 	latestTerm := uint64(1)
 	r := &replicator{
