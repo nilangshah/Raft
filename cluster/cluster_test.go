@@ -33,7 +33,11 @@ func GetPath() string {
 func getkeyval(item string) (key, val string) {
 	splits := strings.Split(item, "=")
 	key = splits[0]
-	val = strings.Join(splits[1:], "=")
+//	val = strings.Join(splits[1:], "=")
+	newval := strings.Join(splits[1:], "=")
+	vals := strings.Split(newval,":")
+	val = vals[0]
+	
 	return
 }
 
