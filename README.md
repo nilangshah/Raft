@@ -21,10 +21,10 @@ Raft elects leader and replicate log entires to guarantees that the responses se
 TODO
 ====
 
-* ~~Leader election~~
+* ~~Leader election~~ Done
 * Log replication 
-* ~~Basic unit tests~~ done
-* ~~Tcp transport~~ done
+* ~~Basic unit tests~~ Done
+* ~~Tcp transport~~ Done
 * Configuration changes
 * Log compaction
 * Complex unit tests
