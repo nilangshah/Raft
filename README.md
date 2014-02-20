@@ -32,6 +32,7 @@ TODO
     
 Usage
 ===== 
+[![Build Status](https://travis-ci.org/nilangshah/Raft.png?branch=master)](https://travis-ci.org/nilangshah/Raft)
 
 * We need to setup zmq 4.0.3 first
  * sudo apt-get install autoconf
@@ -42,6 +43,7 @@ Usage
  * ./configure
  * make
  * sudo make install
+ * go get github.com/pebbe/zmq4
 * Checkout project from github
  * go get github.com/nilang.shah/Raft
 * Run tests to test Raft Package
