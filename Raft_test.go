@@ -1,130 +1,104 @@
 package Raft
 
 import (
-	"github.com/nilangshah/Raft/cluster"
+	//"fmt"
 	"log"
+	"math/rand"
 	"os"
+	"os/exec"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
-	"strings"
-	"math/rand"
-	"fmt"
+	//"fmt"
+	"net/rpc"
 )
 
+var wg *sync.WaitGroup
+var nos int
 
-func GetPath() string {
-	data := os.Environ()
-	for _, item := range data {
-		key, val := getkeyval(item)
-		if key == "GOPATH" {
-			return val
-		}
-	}
-	return ""
+type Args struct {
+	X, Y int
+}
+type LeaderInfo struct {
+	Term uint64
+	//id of the candidate
+	Pid uint64
 }
 
-func getkeyval(item string) (key, val string) {
-	splits := strings.Split(item, "=")
-	key = splits[0]
-	newval := strings.Join(splits[1:], "=")
-	vals := strings.Split(newval,":")
-	val = vals[0]
-	return
-}
-var repliCator []Replicator
-//var f *File
-// Stop leader 3 times at interval of 10 seconds... only 2 server will left and no leader present... start again 2 server and new leader will be elected. 
+//start 5 servers and kill randomly 3 servers and after 5 second start them..
 func TestElection_1(t *testing.T) {
-	fmt.Println("test 1 started")
-	logfilePath := GetPath() + "/src/github.com/nilangshah/Raft/log"
-	f, err := os.OpenFile(logfilePath, os.O_RDWR|os.O_CREATE, 0666)
-	if err != nil {
-		//t.Fatalf("error opening file: %v", err)
-	} else{
-	defer f.Close()
-	log.SetOutput(f)
-	}
-	no_of_servers = 5
-	quorum = ((no_of_servers - 1) / 2) + 1
-	out := make(chan int)
-	path := GetPath() + "/src/github.com/nilangshah/Raft/cluster/config.json"
-	server := make([]cluster.Server, no_of_servers)
-	repliCator = make([]Replicator, no_of_servers)
-	for i := 1; i <= no_of_servers; i++ {
-		server[i-1] = cluster.New(i, path)
-		repliCator[i-1] = New(server[i-1], path)
-		repliCator[i-1].Start()
-	}
-	i1, i2, i3 := -1, -1, -1
-	for j := 0; j < 3; j++ {
-		select {
-		case _ = <-out:
+	nos = 5
+	cmd := make([]*exec.Cmd, nos)
+	wg = new(sync.WaitGroup)
+	path := os.Getenv("GOPATH") + "/bin/main"
 
-		case <-time.After(5 * time.Second):
-			for i := range repliCator {
-				if repliCator[i].IsLeader() {
-					i1 = i2
-					i2 = i3
-					i3 = i
-					//log.Println("server ", server[i].Pid(), " is killed")
-					repliCator[i].IsLeaderSet(false)
-					repliCator[i].Stop()
+	for i := 1; i < 6; i++ {
+		cmd[i-1] = exec.Command(path, "-id", strconv.Itoa(i))
+		cmd[i-1].Start()
+	}
+	select {
+	case <-time.After(2 * time.Second):
+	}
+	for j := 0; j < 5; j = j + 2 {
+		wg.Add(1)
+		go KillServer(wg, cmd, j)
+		wg.Wait()
+
+	}
+	var reply []LeaderInfo
+	select {
+	case <-time.After(15 * time.Second):
+		port := 12345
+		reply = make([]LeaderInfo, 5)
+		for i := 1; i < 6; i++ {
+
+			client, err := rpc.Dial("tcp", "127.0.0.1:"+strconv.Itoa(port+i))
+			if err != nil {
+			} else {
+				arg := &Args{1, 2}
+
+				err = client.Call("RaftTest.LeaderInfo", arg, &reply[i-1])
+				if err != nil {
+					log.Fatal("communication error:", err)
 				}
 			}
+			client.Close()
+		}
 
+		if (reply[0].Term == reply[1].Term) && (reply[2].Term == reply[3].Term) && (reply[4].Term == reply[1].Term) && (reply[0].Pid == reply[1].Pid) && (reply[2].Pid == reply[3].Pid) && (reply[4].Pid == reply[1].Pid) {
+		} else {
+			panic("test failed")
 		}
 	}
-	for j := 0; j < 3; j++ {
-		select {
-		case _ = <-out:
-
-		case <-time.After(5 * time.Second):
-			repliCator[i1].Start()
-			i1 = i2
-			i2=i3
+	select {
+	case <-time.After(5 * time.Second):
+		for i := 1; i < 6; i++ {
+			cmd[i-1].Process.Kill()
+			cmd[i-1].Wait()
 		}
 	}
-	select{
-	case <-out:
-	case <-time.After(10*time.Second):
-		return
-	}
-}
 
-
-func killOneServer(replicator *[]Replicator){
-
-	n:=rand.Intn(no_of_servers)
-	if (*replicator)[n].IsRunning(){
-		(*replicator)[n].Stop()
-		select{
-			case <- time.After(1*time.Second):
-				(*replicator)[n].Start()	
-		}
-	}
-}
-
-
-// stop any server randomly after each 1 second and start it after 1 second.
-func TestElection_2(t *testing.T){
-	fmt.Println("test 2 started")
-	logfilePath := GetPath() + "/src/github.com/nilangshah/Raft/log"
-	f, err := os.OpenFile(logfilePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		//t.Fatalf("error opening file: %v", err)
-	} else{
-	defer f.Close()
-	log.SetOutput(f)
-	}
-	for count:=0;count<20;count++{
-		select{
-			case <-time.After(1*time.Second):
-				go killOneServer(&repliCator)
-				
-		}	
-	}
+	return
 
 }
 
+func KillServer(wg *sync.WaitGroup, cmd []*exec.Cmd, j int) {
+	path := os.Getenv("GOPATH") + "/bin/main"
+	a := 0
+	rand.Seed(time.Now().Unix())
+	if j == 4 {
+		a = 0
+	} else {
+		a = rand.Intn(2)
+	}
+	cmd[j+a].Process.Kill()
+	cmd[j+a].Wait()
+	wg.Done()
+	select {
+	case <-time.After(5 * time.Second):
+		cmd[j+a] = exec.Command(path, "-id", strconv.Itoa(j+a+1))
+		cmd[j+a].Start()
+	}
 
-
+}

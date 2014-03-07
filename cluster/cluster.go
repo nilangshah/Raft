@@ -3,8 +3,11 @@ package cluster
 import (
 	"encoding/json"
 	//"fmt"
+	"bytes"
+	"encoding/gob"
 	zmq "github.com/pebbe/zmq4"
 	"io/ioutil"
+	"log"
 	"time"
 )
 
@@ -19,7 +22,8 @@ type Jsonobject struct {
 }
 
 type ObjectType struct {
-	Servers []ServerInfo
+	Servers       []ServerInfo
+	No_of_servers int
 }
 
 type ServerInfo struct {
@@ -56,6 +60,13 @@ type Server interface {
 
 	// the channel to receive messages from other peers.
 	Inbox() chan *Envelope
+
+	//get the no of peers 
+	No_Of_Peers() int
+}
+
+func (s serVer) No_Of_Peers() int {
+	return s.nop
 }
 
 func (s serVer) Outbox() chan *Envelope {
@@ -82,8 +93,8 @@ type serVer struct {
 	out     chan *Envelope
 	addr    map[int]string
 	sockets map[int]*zmq.Socket
+	nop     int
 }
-
 
 func New(myid int, fileName string) Server {
 	//fmt.Println(myid,"")
@@ -100,13 +111,13 @@ func New(myid int, fileName string) Server {
 		out:     make(chan *Envelope),
 		addr:    map[int]string{},
 		sockets: make(map[int]*zmq.Socket),
+		nop:     Jsontype.Object.No_of_servers,
 	}
 
 	count := 0
 	for i := range Jsontype.Object.Servers {
 		if Jsontype.Object.Servers[i].Id == myid {
 			s.pid = myid
-			//s.term=Jsontype.Object.Servers[i].Term
 		} else {
 			s.peers[count] = Jsontype.Object.Servers[i].Id
 			count++
@@ -115,15 +126,13 @@ func New(myid int, fileName string) Server {
 
 	}
 	for i := range s.Peers() {
-	//fmt.Println("peers of server",s.Pid(),"is  ")
-	s.sockets[s.peers[i]],_ =  zmq.NewSocket(zmq.PUSH)
-	s.sockets[s.peers[i]].SetSndtimeo(time.Millisecond*30)
-	err := s.sockets[s.peers[i]].Connect("tcp://" + s.addr[s.peers[i]])
-	if err != nil {
-		panic("Connect error " + err.Error())
-	}
+		s.sockets[s.peers[i]], _ = zmq.NewSocket(zmq.PUSH)
+		s.sockets[s.peers[i]].SetSndtimeo(time.Millisecond * 30)
+		err := s.sockets[s.peers[i]].Connect("tcp://" + s.addr[s.peers[i]])
+		if err != nil {
+			panic("Connect error " + err.Error())
+		}
 
-		
 	}
 	go ListenIn(s)
 	go SendOut(s)
@@ -131,58 +140,43 @@ func New(myid int, fileName string) Server {
 }
 
 func SendOut(s *serVer) {
-	//count1:=0
-	//sock := make(*zmq.Socket)
+	// Stand-in for a network connection
+	var network bytes.Buffer
 	for {
-		//	if count1%1000==0{fmt.Println(count1)}
-		//select {
-		 envelope := <-(s.Outbox())
-		//	count1++
-			if envelope.Pid == BROADCAST {
-				envelope.Pid = s.Pid()
-				
-				for i := range s.Peers() {
-						
-						b, err := json.Marshal(envelope)
-						if err != nil {
-							panic("Json error: " + err.Error())
-						}
-						s.sockets[s.peers[i]].Send(string(b), 0)
+		envelope := <-(s.Outbox())
+		if envelope.Pid == BROADCAST {
+			envelope.Pid = s.Pid()
 
+			for i := range s.Peers() {
+
+				network.Reset()
+				enc := gob.NewEncoder(&network)
+
+				err := enc.Encode(envelope)
+				if err != nil {
+					panic("gob error: " + err.Error())
 				}
-			} else {
-					a:=envelope.Pid
-					envelope.Pid = s.Pid()
-					//go Connect_Send(sock, envelope)
-					b, err := json.Marshal(envelope)
-					if err != nil {
-						panic("Json error: " + err.Error())
-					}
-					s.sockets[a].Send(string(b), 0)
-				//go Connect_Send(s.addr[envelope.Pid], envelope)
+				s.sockets[s.peers[i]].Send(network.String(), 0)
 
 			}
-	//	case <-time.After(100 * time.Second):
-			//			fmt.Println("shud close all socket")
+		} else {
+			network.Reset()
+			a := envelope.Pid
+			envelope.Pid = s.Pid()
+			enc := gob.NewEncoder(&network)
+			err := enc.Encode(envelope)
+			if err != nil {
+				panic("gob error: " + err.Error())
+			}
+			s.sockets[a].Send(network.String(), 0)
 
-		//}
+		}
+
 	}
 
 }
 
-/*
-func Connect_Send(output *zmq.Socket, env *Envelope) {
-
-	b, err := json.Marshal(env)
-	if err != nil {
-		panic("Json error: " + err.Error())
-	}
-	output.Send(string(b),0)
-
-}*/
-
 func ListenIn(s *serVer) {
-	//fmt.Println("recieveing on ", s.addr[s.Pid()])
 	input, err := zmq.NewSocket(zmq.PULL)
 	if err != nil {
 		panic("Socket: " + err.Error())
@@ -196,13 +190,16 @@ func ListenIn(s *serVer) {
 		msg, err := input.Recv(0)
 		if err != nil {
 		}
+		//env := new(Envelope)
+		b := bytes.NewBufferString(msg)
+		dec := gob.NewDecoder(b)
+		//log.Println(msg)
 		env := new(Envelope)
-		err = json.Unmarshal([]byte(msg), &env)
+		err = dec.Decode(env)
 		if err != nil {
-			panic("Json error:" + err.Error())
+			log.Fatal("decode:", err)
 		}
-		//fmt.Printf("%+v", animals)
-
+		//err = json.Unmarshal([]byte(msg), &env)
 		s.Inbox() <- env
 	}
 

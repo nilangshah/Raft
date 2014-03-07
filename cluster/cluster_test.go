@@ -1,6 +1,8 @@
 package cluster
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -8,16 +10,15 @@ import (
 	"sync"
 	"testing"
 	"time"
-	"bytes"
-	"errors"
 )
 
-var (errNotSame = errors.New("Msg do not match"))
+var (
+	errNotSame = errors.New("Msg do not match")
+)
 
 var wg *sync.WaitGroup
 
 var buffer bytes.Buffer
-
 
 func GetPath() string {
 	data := os.Environ()
@@ -33,11 +34,11 @@ func GetPath() string {
 func getkeyval(item string) (key, val string) {
 	splits := strings.Split(item, "=")
 	key = splits[0]
-//	val = strings.Join(splits[1:], "=")
+	//	val = strings.Join(splits[1:], "=")
 	newval := strings.Join(splits[1:], "=")
-	vals := strings.Split(newval,":")
+	vals := strings.Split(newval, ":")
 	val = vals[0]
-	
+
 	return
 }
 
@@ -54,25 +55,23 @@ func BombardMsg(s Server) {
 
 }
 
-
 func strcmp(a, b string) int {
-  var min = len(b)
-  if len(a) < len(b) {
-    min = len(a)
-  }
-  var diff int
-  for i := 0; i < min && diff == 0; i++ {
-    diff = int(a[i]) - int(b[i])
-  }
-  if diff == 0 {
-    diff = len(a) - len(b)
-  }
-  return diff
+	var min = len(b)
+	if len(a) < len(b) {
+		min = len(a)
+	}
+	var diff int
+	for i := 0; i < min && diff == 0; i++ {
+		diff = int(a[i]) - int(b[i])
+	}
+	if diff == 0 {
+		diff = len(a) - len(b)
+	}
+	return diff
 }
 
-
 func LargeMsg(s Server) {
-	
+
 	for i := 0; i < 100000; i++ {
 		buffer.WriteString(strconv.Itoa(i))
 	}
@@ -85,10 +84,10 @@ func MatchLargeMsg(s Server) {
 		select {
 
 		case envelope := <-s.Inbox():
-			a:=envelope.Msg.(string)
-			b:=strcmp(buffer.String(),a)
-			if b!=0{
-				panic(errNotSame)			
+			a := envelope.Msg.(string)
+			b := strcmp(buffer.String(), a)
+			if b != 0 {
+				panic(errNotSame)
 			}
 		case <-time.After(5 * time.Second):
 			wg.Done()
@@ -139,16 +138,15 @@ func TestSize(t *testing.T) {
 
 }
 
-
-
 func ListenMsg(s Server) {
 	count := 0
 	for {
 		select {
 
 		case _ = <-s.Inbox():
+
 			count++
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 			wg.Done()
 			return
 

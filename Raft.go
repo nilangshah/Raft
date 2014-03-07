@@ -1,25 +1,29 @@
 package Raft
 
 import (
+	"encoding/gob"
 	"fmt"
 	"github.com/nilangshah/Raft/cluster"
 	"log"
 	"math/rand"
-	"reflect"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 )
+
 //total no of servers
 var no_of_servers int
 
 //no of votes needed to win election
-var quorum int        
+var quorum int
 
 //possible states of server at any point of time
 const (
-	follower  = "Follower" 
+	follower  = "Follower"
 	candidate = "Candidate"
 	leader    = "Leader"
+	debug     = true
 )
 
 //constants
@@ -27,13 +31,13 @@ const (
 	//Leader is unknwon
 	unknownLeader = 0
 	// Have not vote anyone in perticular term
-	noVote        = 0
+	noVote = 0
 	//Message type is request of vote
-	RequestType   = 1  
+	RequestType = 1
 	//Message type is response of vote request
-	ResponseType  = 2
+	ResponseType = 2
 	// Message type is Heartbeat of leader
-	Heartbeat     = 3
+	Heartbeat = 3
 )
 
 var (
@@ -42,83 +46,74 @@ var (
 	// follower will become candidate and start new election
 	//If candidate do not hear from followers during [T-2T] time election timer will hit
 	// candidate will update term and start a fresh election 
-	MinimumElectionTimeoutMs int32 = 250 
+	MinimumElectionTimeoutMs int32 = 250
 	//max election time out -  2T milliseconds
-	maximumElectionTimeoutMs = 2 * MinimumElectionTimeoutMs 
+	maximumElectionTimeoutMs = 2 * MinimumElectionTimeoutMs
 )
 
 // string with mutex
-type protectedString struct { 
+type protectedString struct {
 	sync.RWMutex
 	value string
 }
 
 // bool with mutex
-type protectedVotes struct { 
+type protectedVotes struct {
 	sync.RWMutex
 	votes map[uint64]bool
 }
 
 // getter method for protectedstring
-func (s *protectedString) Get() string { 
+func (s *protectedString) Get() string {
 	s.RLock()
 	defer s.RUnlock()
 	return s.value
 }
 
 // setter method for protectedstring
-func (s *protectedString) Set(value string) { 
+func (s *protectedString) Set(value string) {
 	s.Lock()
 	defer s.Unlock()
 	s.value = value
 }
 
 // response of vote
-type voteResponse struct { 
-	Term        uint64
+type voteResponse struct {
+	Term uint64
 	// vote granted or not
-	VoteGranted bool 
+	VoteGranted bool
 }
 
 //vote request
 type voteRequest struct {
-	Term        uint64 
+	Term uint64
 	//id of the candidate
-	CandidateID uint64 
+	CandidateID uint64
 }
 
 // heartbeat msg of server
 type heartbeat struct {
 	// server id
-	Id      uint64 
-	Term    uint64 
+	Id      uint64
+	Term    uint64
 	Success bool
 }
 
-type msgPass struct {
-	// type of msg
-	MsgType  int           
-	Request  *voteRequest  //msgtype = 1
-	Response *voteResponse // msgtype= 2
-	Hb       heartbeat     //msgtype=3
-
-}
-
 // mutex boolean
-type protectedBool struct { 
+type protectedBool struct {
 	sync.RWMutex
 	value bool
 }
 
 // getter method of bool
-func (s *protectedBool) Get() bool { 
+func (s *protectedBool) Get() bool {
 	s.RLock()
 	defer s.RUnlock()
 	return s.value
 }
 
 // setter method of bool
-func (s *protectedBool) Set(value bool) { 
+func (s *protectedBool) Set(value bool) {
 	s.Lock()
 	defer s.Unlock()
 	s.value = value
@@ -129,9 +124,11 @@ func (s *protectedBool) Set(value bool) {
 // Replicator uses cluster package for commnication to other replicator instances.
 type Replicator interface {
 	// Term of this replicator 
- 	Term() uint64
+	Term() uint64
 	// Is this replicator leader
 	IsLeader() bool
+	//
+	GetLeader() uint64
 	// replicator is started or stopped
 	IsRunning() bool
 	// method to set replicator leader
@@ -140,6 +137,11 @@ type Replicator interface {
 	Start()
 	// method to stop replicator
 	Stop()
+}
+
+//return leader as per this replicator
+func (r replicator) GetLeader() uint64 {
+	return r.leader
 }
 
 //return term of server
@@ -154,11 +156,12 @@ func (r replicator) IsLeader() bool {
 	return r.isLeader.Get()
 }
 
-func (r replicator) IsRunning() bool{
+func (r replicator) IsRunning() bool {
 	r.running.RLock()
 	defer r.running.RUnlock()
 	return r.running.Get()
 }
+
 //set server leader status
 func (r replicator) IsLeaderSet(val bool) {
 	r.isLeader.Lock()
@@ -168,7 +171,9 @@ func (r replicator) IsLeaderSet(val bool) {
 
 //start the server
 func (r *replicator) Start() {
-	log.Println("server started ", r.s.Pid())
+	if debug {
+		log.Println("server started ", r.s.Pid())
+	}
 	go r.loop()
 }
 
@@ -177,11 +182,10 @@ func (r *replicator) Stop() {
 	q := make(chan struct{})
 	r.quit <- q
 	<-q
-	log.Println("server stopped ", r.s.Pid())
 }
 
 // replicator object
-type replicator struct { 
+type replicator struct {
 	s            cluster.Server     // server interface
 	term         uint64             // "current term number, which increases monotonically"
 	vote         uint64             // vote given to which sevrer
@@ -195,9 +199,34 @@ type replicator struct {
 	//requestVoteChan chan requestVoteTuple
 }
 
+func init() {
+	gob.Register(voteResponse{}) // give it a dummy VoteRequestObject.
+	gob.Register(voteRequest{})
+	gob.Register(heartbeat{})
+
+}
+
 // Create replicator object and return replicator interface for it
 func New(server cluster.Server, fileName string) Replicator { // returns replicator interface
 	latestTerm := uint64(1)
+
+	///////////////////////////////
+	if debug {
+		logfile := os.Getenv("GOPATH") + "/src/github.com/nilangshah/Raft/log" + strconv.Itoa(server.Pid())
+		f, err := os.OpenFile(logfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			//t.Fatalf("error opening file: %v", err)
+		} else {
+			//defer f.Close()
+			log.SetOutput(f)
+		}
+	}
+	//////////////////////////////	
+	no_of_servers = server.No_Of_Peers()
+	quorum = ((no_of_servers - 1) / 2) + 1
+	if debug {
+		log.Println(no_of_servers, "quouram is ::::::::::::::::::", quorum)
+	}
 	r := &replicator{
 		s:            server,
 		term:         latestTerm,
@@ -224,7 +253,9 @@ func (r *replicator) loop() {
 	r.running.Set(true)
 
 	for r.running.Get() {
-		log.Println(">>> server", r.s.Pid(), "in term", r.term, "in state ", r.state.Get())
+		if debug {
+			log.Println(">>> server", r.s.Pid(), "in term", r.term, "in state ", r.state.Get())
+		}
 		switch state := r.state.Get(); state {
 		case follower:
 			r.followerSelect()
@@ -238,7 +269,6 @@ func (r *replicator) loop() {
 	}
 }
 
-
 //send heartbeat to peers after each broadcast interval
 func broadcastInterval() time.Duration {
 	d := MinimumElectionTimeoutMs / 10
@@ -246,13 +276,9 @@ func broadcastInterval() time.Duration {
 }
 
 func (r replicator) sendHeartBeat() {
-	msg := &msgPass{
-		MsgType: Heartbeat,
-		Hb:      heartbeat{Id: uint64(r.s.Pid()), Term: r.term},
-	}
+	msg := &heartbeat{Id: uint64(r.s.Pid()), Term: r.term}
 	r.s.Outbox() <- &cluster.Envelope{Pid: -1, Msg: msg}
 }
-
 
 // for leaderstate
 func (r *replicator) leaderSelect() {
@@ -267,7 +293,6 @@ func (r *replicator) leaderSelect() {
 	defer hbeat.Stop()
 	go func() {
 		for _ = range hbeat.C {
-			//log.Println("send heart beat")
 			r.sendHeartBeat()
 		}
 	}()
@@ -279,95 +304,33 @@ func (r *replicator) leaderSelect() {
 			return
 
 		case t := <-r.s.Inbox():
-			msg, ok := (t.Msg).(map[string]interface{})
-			if !ok {
-				log.Println("not proper msg", r.s.Pid())
-				panic("msg")
-				return
-			}
-			mType := msg["MsgType"].(float64)
+			//mType := msg["MsgType"].(float64)
 
-			switch int(mType) {
-			case 1:
-
-				req := voteRequest{}
-				v := reflect.ValueOf(&req).Elem()
-
-				for key, value := range msg["Request"].(map[string]interface{}) {
-					field := v.FieldByName(key)
-					if !field.IsValid() {
-						println("invalid")
-						break
-					}
-					if !field.CanSet() {
-						// or return an error on private fields
-						continue
-					}
-					val, ok := value.(float64)
-					if ok {
-						field.Set(reflect.ValueOf(uint64(val)))
-					} else {
-						field.Set(reflect.ValueOf(value))
-					}
-				}
-
+			switch t.Msg.(type) {
+			case voteRequest:
+				req := t.Msg.(voteRequest)
 				resp, stepDown := r.handleRequestVote(req)
-				msg := &msgPass{
-					MsgType:  ResponseType,
-					Response: resp,
-				}
 
-				r.s.Outbox() <- &cluster.Envelope{Pid: int(req.CandidateID), Msg: msg}
+				r.s.Outbox() <- &cluster.Envelope{Pid: int(req.CandidateID), Msg: resp}
 				if stepDown {
 					if r.leader != unknownLeader {
 						log.Printf("abandoning old leader=%d\n", r.leader)
 					}
-					//log.Println("new leader unknown")
+					if debug {
+						log.Println("new leader unknown", r.s.Pid())
+					}
 					r.leader = unknownLeader
 					r.state.Set(follower)
 					return
 				}
-			case 2:
-				res := voteResponse{}
-				v := reflect.ValueOf(&res).Elem()
+			case voteResponse:
+				//res :=t.Msg.(*voteResponse)
 
-				for key, value := range msg["Response"].(map[string]interface{}) {
-					field := v.FieldByName(key)
-					if !field.IsValid() {
-						println("invalid")
-						break
-					}
-					if !field.CanSet() {
-						continue
-					}
-					val, ok := value.(float64)
-					if ok {
-						field.Set(reflect.ValueOf(uint64(val)))
-					} else {
-						field.Set(reflect.ValueOf(value))
-					}
+			case heartbeat:
+				res := t.Msg.(heartbeat)
+				if debug {
+					log.Println("Error:two server in", "server ids", r.s.Pid(), res.Id, "terms", r.term, ":", res.Term)
 				}
-			case Heartbeat:
-				res := heartbeat{}
-				v := reflect.ValueOf(&res).Elem()
-
-				for key, value := range msg["Hb"].(map[string]interface{}) {
-					field := v.FieldByName(key)
-					if !field.IsValid() {
-						println("invalid")
-						break
-					}
-					if !field.CanSet() {
-						continue
-					}
-					val, ok := value.(float64)
-					if ok {
-						field.Set(reflect.ValueOf(uint64(val)))
-					} else {
-						field.Set(reflect.ValueOf(value))
-					}
-				}
-				log.Println("Error:two server in", "server ids", r.s.Pid(), res.Id, "terms", r.term, ":", res.Term)
 				stepDown := r.handleHeartbeat(res)
 				if stepDown {
 					r.leader = res.Id
@@ -390,9 +353,18 @@ func (r *replicator) handleHeartbeat(res heartbeat) bool {
 	}
 	stepDown := false
 	if res.Term > r.term {
-		log.Println("server shud stepdown", r.s.Pid(), ":", r.term)
+
 		r.term = res.Term
 		r.vote = noVote
+		log.Println("leader updated to ", res.Id)
+		if debug {
+			if r.state.Get() == leader {
+				log.Println("server shud stepdown", r.s.Pid(), ":", r.term)
+			}
+			if r.state.Get() != leader {
+				log.Println("update term to ", res.Term)
+			}
+		}
 		return true
 	}
 
@@ -400,6 +372,9 @@ func (r *replicator) handleHeartbeat(res heartbeat) bool {
 		r.term = res.Term
 		r.vote = noVote
 		return true
+	}
+	if r.leader == unknownLeader {
+		r.leader = res.Id
 	}
 	r.resetElectionTimeout()
 	return stepDown
@@ -413,96 +388,58 @@ func (r *replicator) candidateSelect() {
 		panic("known leader when entering candidateSelect")
 	}
 	if r.vote != 0 {
-		log.Println(r.s.Pid(),":",r.state)
+		if debug {
+			log.Println(r.s.Pid(), ":", r.state)
+		}
 		panic("existing vote when entering candidateSelect")
 	}
 	r.generateVoteRequest()
 
 	voting := protectedVotes{votes: map[uint64]bool{uint64(r.s.Pid()): true}}
 	r.vote = uint64(r.s.Pid())
-	log.Printf("term=%d election started\n", r.term)
-
+	if debug {
+		log.Printf("term=%d election started\n", r.term)
+	}
 	for {
 		select {
 		case q := <-r.quit:
-			log.Println("quit")
+			if debug {
+				log.Println("quit")
+			}
 			r.handleQuit(q)
 			return
 		case <-r.electionTick:
-			log.Println("election ended with no winner; incrementing term and trying again")
+			if debug {
+				log.Println("election ended with no winner; incrementing term and trying again ", r.s.Pid())
+			}
 			r.resetElectionTimeout()
 			r.term++
 			r.vote = noVote
 			return // draw
 		case t := <-r.s.Inbox():
-			msg, ok := (t.Msg).(map[string]interface{})
-			if !ok {
-				log.Println("not proper msg", r.s.Pid())
-				panic("msg")
-				return
-			}
-			mType := msg["MsgType"].(float64)
-			switch int(mType) {
-			case 1:
+			switch t.Msg.(type) {
+			case voteRequest:
 
-				req := voteRequest{}
-				v := reflect.ValueOf(&req).Elem()
-
-				for key, value := range msg["Request"].(map[string]interface{}) {
-					field := v.FieldByName(key)
-					if !field.IsValid() {
-						println("invalid")
-						break
-					}
-					if !field.CanSet() {
-						continue
-					}
-					val, ok := value.(float64)
-					if ok {
-						field.Set(reflect.ValueOf(uint64(val)))
-					} else {
-						field.Set(reflect.ValueOf(value))
-					}
-				}
-
+				req := t.Msg.(voteRequest)
 				resp, stepDown := r.handleRequestVote(req)
-				msg := &msgPass{
-					MsgType:  ResponseType,
-					Response: resp,
-				}
-
-				r.s.Outbox() <- &cluster.Envelope{Pid: int(req.CandidateID), Msg: msg}
+				r.s.Outbox() <- &cluster.Envelope{Pid: int(req.CandidateID), Msg: resp}
 				if stepDown {
 					// stepDown as a Follower means just to reset the leader
 					if r.leader != unknownLeader {
-						log.Printf("abandoning old leader=%d\n", r.leader)
+						if debug {
+							log.Printf("abandoning old leader=%d\n", r.leader)
+						}
 					}
-					//log.Println("new leader unknown")
+					if debug {
+						log.Println("new leader unknown")
+					}
 					r.leader = unknownLeader
 					r.state.Set(follower)
 					return
 				}
-			case Heartbeat:
-				res := heartbeat{}
-				v := reflect.ValueOf(&res).Elem()
-
-				for key, value := range msg["Hb"].(map[string]interface{}) {
-					field := v.FieldByName(key)
-					if !field.IsValid() {
-						println("invalid")
-						break
-					}
-					if !field.CanSet() {
-						continue
-					}
-					val, ok := value.(float64)
-					if ok {
-						field.Set(reflect.ValueOf(uint64(val)))
-					} else {
-						field.Set(reflect.ValueOf(value))
-					}
-				}
-				//log.Println("leader is up and running ", res.Id)
+			case heartbeat:
+				res := t.Msg.(heartbeat)
+				log.Println("leader is up and running ", res.Id)
 				stepDown := r.handleHeartbeat(res)
 				if stepDown {
 					r.leader = res.Id
@@ -510,47 +447,38 @@ func (r *replicator) candidateSelect() {
 					return
 				}
 
-			case 2:
-				res := voteResponse{}
-				v := reflect.ValueOf(&res).Elem()
+			case voteResponse:
+				res := t.Msg.(voteResponse)
 
-				for key, value := range msg["Response"].(map[string]interface{}) {
-					field := v.FieldByName(key)
-					if !field.IsValid() {
-						println("invalid")
-						break
-					}
-					if !field.CanSet() {
-						continue
-					}
-					val, ok := value.(float64)
-					if ok {
-						field.Set(reflect.ValueOf(uint64(val)))
-					} else {
-						field.Set(reflect.ValueOf(value))
-					}
-				}
 				//r.responseVoteChan <- t.msg.Response	
 				if res.Term > r.term {
-					log.Printf("got vote from future term (%d>%d); abandoning election\n", res.Term, r.term)
+					if debug {
+						log.Printf("got vote from future term (%d>%d); abandoning election\n", res.Term, r.term)
+					}
 					r.leader = unknownLeader
 					r.state.Set(follower)
 					r.vote = noVote
 					return // lose
 				}
 				if res.Term < r.term {
-					log.Printf("got vote from past term (%d<%d); ignoring\n", res.Term, r.term)
+					if debug {
+						log.Printf("got vote from past term (%d<%d); ignoring\n", res.Term, r.term)
+					}
 					break
 				}
 				if res.VoteGranted {
-					//log.Printf("%d voted for me\n", t.Pid)
+					if debug {
+						log.Printf("%d voted for me\n", t.Pid)
+					}
 					voting.Lock()
 					voting.votes[uint64(t.Pid)] = true
 					voting.Unlock()
 				}
 				// "Once a candidate wins an election, it becomes leader."
 				if r.pass(voting) {
-					log.Println("I won the election")
+					if debug {
+						log.Println("I won the election", r.s.Pid())
+					}
 					r.isLeader.Set(true)
 					r.leader = uint64(r.s.Pid())
 					r.state.Set(leader)
@@ -588,15 +516,13 @@ func (r replicator) pass(voting protectedVotes) bool {
 //ask vote to peers
 func (r replicator) generateVoteRequest() {
 
-	msg := &msgPass{
-		MsgType: RequestType,
-		Request: &voteRequest{
-			Term:        r.term,
-			CandidateID: uint64(r.s.Pid()),
-		},
-		//Response: nil,		
+	msg := &voteRequest{
+		Term:        r.term,
+		CandidateID: uint64(r.s.Pid()),
 	}
-	log.Println("generate vote request ", r.s.Pid())
+	if debug {
+		log.Println("generate vote request ", r.s.Pid())
+	}
 	r.s.Outbox() <- &cluster.Envelope{Pid: -1, Msg: msg}
 }
 
@@ -608,7 +534,9 @@ func (r *replicator) followerSelect() {
 			r.handleQuit(q)
 			return
 		case <-r.electionTick:
-			log.Println("election timeout, becoming candidate", r.s.Pid())
+			if debug {
+				log.Println("election timeout, becoming candidate", r.s.Pid())
+			}
 			r.term++
 			r.vote = noVote
 			r.leader = unknownLeader
@@ -618,44 +546,14 @@ func (r *replicator) followerSelect() {
 			return
 
 		case t := <-r.s.Inbox():
-			msg, ok := (t.Msg).(map[string]interface{})
-			if !ok {
-				log.Println("not proper msg", r.s.Pid())
-				panic("msg")
-				return
-			}
-			mType := msg["MsgType"].(float64)
+			switch t.Msg.(type) {
+			case voteRequest:
 
-			switch int(mType) {
-			case 1:
-
-				req := voteRequest{}
-				v := reflect.ValueOf(&req).Elem()
-
-				for key, value := range msg["Request"].(map[string]interface{}) {
-					field := v.FieldByName(key)
-					if !field.IsValid() {
-						println("invalid")
-						break
-					}
-					if !field.CanSet() {
-						continue
-					}
-					val, ok := value.(float64)
-					if ok {
-						field.Set(reflect.ValueOf(uint64(val)))
-					} else {
-						field.Set(reflect.ValueOf(value))
-					}
-				}
+				req := t.Msg.(voteRequest)
 
 				resp, stepDown := r.handleRequestVote(req)
-				msg := &msgPass{
-					MsgType:  ResponseType,
-					Response: resp,
-				}
 
-				r.s.Outbox() <- &cluster.Envelope{Pid: int(req.CandidateID), Msg: msg}
+				r.s.Outbox() <- &cluster.Envelope{Pid: int(req.CandidateID), Msg: resp}
 				if stepDown {
 					// stepDown as a Follower means just to reset the leader
 					if r.leader != unknownLeader {
@@ -664,48 +562,13 @@ func (r *replicator) followerSelect() {
 					//log.Println("new leader unknown")
 					r.leader = unknownLeader
 				}
-			case 2:
-				res := voteResponse{}
-				v := reflect.ValueOf(&res).Elem()
+			case voteResponse:
+				//res := t.Msg.(*voteResponse)
 
-				for key, value := range msg["Response"].(map[string]interface{}) {
-					field := v.FieldByName(key)
-					if !field.IsValid() {
-						println("invalid")
-						break
-					}
-					if !field.CanSet() {
-						// or return an error on private fields
-						continue
-					}
-					val, ok := value.(float64)
-					if ok {
-						field.Set(reflect.ValueOf(uint64(val)))
-					} else {
-						field.Set(reflect.ValueOf(value))
-					}
-				}
-			case Heartbeat:
-				res := heartbeat{}
-				v := reflect.ValueOf(&res).Elem()
-
-				for key, value := range msg["Hb"].(map[string]interface{}) {
-					field := v.FieldByName(key)
-					if !field.IsValid() {
-						println("invalid")
-						break
-					}
-					if !field.CanSet() {
-						continue
-					}
-					val, ok := value.(float64)
-					if ok {
-						field.Set(reflect.ValueOf(uint64(val)))
-					} else {
-						field.Set(reflect.ValueOf(value))
-					}
-				}
+			case heartbeat:
+				res := t.Msg.(heartbeat)
 				stepDown := r.handleHeartbeat(res)
+				log.Println("for ", r.s.Pid(), "leader is up and running ", res.Id, res.Term, r.term, r.leader)
 				if stepDown {
 					r.leader = res.Id
 					r.state.Set(follower)
@@ -729,7 +592,7 @@ func (r *replicator) handleRequestVote(req voteRequest) (*voteResponse, bool) {
 
 	stepDown := false
 	if req.Term > r.term {
-		//log.Printf("requestVote from newer term (%d): we defer %d", req.Term, r.s.Pid())
+		log.Printf("requestVote from newer term (%d): we defer %d", req.Term, r.s.Pid())
 		r.term = req.Term
 		r.vote = noVote
 		r.leader = unknownLeader
@@ -783,6 +646,9 @@ func electionTimeout() time.Duration {
 
 //to stop the sevrer
 func (r *replicator) handleQuit(q chan struct{}) {
+	if debug {
+		log.Println("server stopped ", r.s.Pid())
+	}
 	r.running.Set(false)
 	close(q)
 }
