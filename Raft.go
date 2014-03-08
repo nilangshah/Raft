@@ -23,7 +23,7 @@ const (
 	follower  = "Follower"
 	candidate = "Candidate"
 	leader    = "Leader"
-	debug     = true
+	debug     = false
 )
 
 //constants
