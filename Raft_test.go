@@ -7,7 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"sync"
+	"sync"	
+	"strings"
 	"testing"
 	"time"
 	//"fmt"
@@ -36,7 +37,8 @@ func TestElection_1(t *testing.T) {
 	nos = 5
 	cmd = make([]*exec.Cmd, nos)
 	wg = new(sync.WaitGroup)
-	path := os.Getenv("GOPATH") + "/bin/main"
+	compeletepath := os.Getenv("GOPATH")
+	path := strings.Split(compeletepath, ":")[0] + "/bin/main"
 
 	for i := 1; i < 6; i++ {
 		cmd[i-1] = exec.Command(path, "-id", strconv.Itoa(i))
