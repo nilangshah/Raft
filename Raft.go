@@ -2,9 +2,12 @@ package Raft
 
 import (
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"github.com/nilangshah/Raft/cluster"
+	"io"
 	"log"
+	"math"
 	"math/rand"
 	"os"
 	"strconv"
@@ -32,12 +35,13 @@ const (
 	unknownLeader = 0
 	// Have not vote anyone in perticular term
 	noVote = 0
-	//Message type is request of vote
-	RequestType = 1
-	//Message type is response of vote request
-	ResponseType = 2
-	// Message type is Heartbeat of leader
-	Heartbeat = 3
+)
+
+var (
+	errTimeout               = errors.New("Time out while log replication")
+	errDeposed               = errors.New("deposed during replication")
+	errOutOfSync             = errors.New("out of sync")
+	errappendEntriesRejected = errors.New("appendEntries RPC rejected")
 )
 
 var (
@@ -75,28 +79,6 @@ func (s *protectedString) Set(value string) {
 	s.Lock()
 	defer s.Unlock()
 	s.value = value
-}
-
-// response of vote
-type voteResponse struct {
-	Term uint64
-	// vote granted or not
-	VoteGranted bool
-}
-
-//vote request
-type voteRequest struct {
-	Term uint64
-	//id of the candidate
-	CandidateID uint64
-}
-
-// heartbeat msg of server
-type heartbeat struct {
-	// server id
-	Id      uint64
-	Term    uint64
-	Success bool
 }
 
 // mutex boolean
@@ -137,6 +119,22 @@ type Replicator interface {
 	Start()
 	// method to stop replicator
 	Stop()
+	// Mailbox for state machine layer above to send commands of any
+	// kind, and to have them replicated by raft.  If the server is not
+	// the leader, the message will be silently dropped.
+	Outbox() chan<- interface{}
+
+	//Mailbox for state machine layer above to receive commands. These
+	//are guaranteed to have been replicated on a majority
+	Inbox() <-chan *LogItem
+}
+
+func (r replicator) Outbox() chan<- interface{} {
+	return r.command_outchan
+}
+
+func (r replicator) Inbox() <-chan *LogItem {
+	return r.command_inchan
 }
 
 //return leader as per this replicator
@@ -184,59 +182,74 @@ func (r *replicator) Stop() {
 	<-q
 }
 
+type nextIndex struct {
+	sync.RWMutex
+	m map[uint64]uint64 // followerId: nextIndex
+}
+
 // replicator object
 type replicator struct {
-	s            cluster.Server     // server interface
-	term         uint64             // "current term number, which increases monotonically"
-	vote         uint64             // vote given to which sevrer
-	electionTick <-chan time.Time   // election timer
-	state        *protectedString   //state can be follower, candidate, leader
-	running      *protectedBool     //servrer is start or stop 
-	leader       uint64             //id of leader
-	isLeader     *protectedBool     //I am leader or not
-	quit         chan chan struct{} // stopping chan
-
+	s               cluster.Server     // server interface
+	term            uint64             // "current term number, which increases monotonically"
+	vote            uint64             // vote given to which sevrer
+	electionTick    <-chan time.Time   // election timer
+	state           *protectedString   //state can be follower, candidate, leader
+	running         *protectedBool     //servrer is start or stop 
+	leader          uint64             //id of leader
+	isLeader        *protectedBool     //I am leader or not
+	quit            chan chan struct{} // stopping chan
+	log             *raftLog           //Raft log
+	logger          *log.Logger
+	command_inchan  chan *LogItem
+	command_outchan chan interface{}
 	//requestVoteChan chan requestVoteTuple
 }
 
 func init() {
 	gob.Register(voteResponse{}) // give it a dummy VoteRequestObject.
 	gob.Register(voteRequest{})
-	gob.Register(heartbeat{})
+	gob.Register(appendEntries{})
+	gob.Register(appendEntriesResponse{})
+	gob.Register(LogItem{})
 
 }
 
 // Create replicator object and return replicator interface for it
-func New(server cluster.Server, fileName string) Replicator { // returns replicator interface
-	latestTerm := uint64(1)
-
+func New(server cluster.Server, store io.ReadWriter, fileName string) Replicator { // returns replicator interface
+	//latestTerm := uint64(1)
+	//var logger *log.Logger
 	///////////////////////////////
-	if debug {
-		logfile := os.Getenv("GOPATH") + "/src/github.com/nilangshah/Raft/log" + strconv.Itoa(server.Pid())
-		f, err := os.OpenFile(logfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-		if err != nil {
-			//t.Fatalf("error opening file: %v", err)
-		} else {
-			//defer f.Close()
-			log.SetOutput(f)
-		}
+	//if debug {
+	logfile := os.Getenv("GOPATH") + "/src/github.com/nilangshah/Raft/log" + strconv.Itoa(server.Pid())
+	f, err := os.OpenFile(logfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		//t.Fatalf("error opening file: %v", err)
+	} else {
+		//defer f.Close()
+
+		//log.SetOutput(f)
 	}
+	//}
 	//////////////////////////////	
+	raftlog := newRaftLog(store)
+	latestTerm := raftlog.lastTerm()
 	no_of_servers = server.No_Of_Peers()
 	quorum = ((no_of_servers - 1) / 2) + 1
-	if debug {
-		log.Println(no_of_servers, "quouram is ::::::::::::::::::", quorum)
-	}
+
 	r := &replicator{
-		s:            server,
-		term:         latestTerm,
-		leader:       unknownLeader,
-		vote:         noVote,
-		electionTick: nil,
-		state:        &protectedString{value: follower},
-		running:      &protectedBool{value: false},
-		isLeader:     &protectedBool{value: false},
-		quit:         make(chan chan struct{}),
+		s:               server,
+		term:            latestTerm,
+		leader:          unknownLeader,
+		vote:            noVote,
+		electionTick:    nil,
+		log:             raftlog,
+		state:           &protectedString{value: follower},
+		running:         &protectedBool{value: false},
+		isLeader:        &protectedBool{value: false},
+		quit:            make(chan chan struct{}),
+		logger:          log.New(f, log.Prefix(), log.Flags()),
+		command_inchan:  make(chan *LogItem),
+		command_outchan: make(chan interface{}),
 	}
 	for i := range cluster.Jsontype.Object.Servers {
 		if cluster.Jsontype.Object.Servers[i].Id == r.s.Pid() {
@@ -254,7 +267,7 @@ func (r *replicator) loop() {
 
 	for r.running.Get() {
 		if debug {
-			log.Println(">>> server", r.s.Pid(), "in term", r.term, "in state ", r.state.Get())
+			r.logger.Println(">>> server", r.s.Pid(), "in term", r.term, "in state ", r.state.Get())
 		}
 		switch state := r.state.Get(); state {
 		case follower:
@@ -264,36 +277,199 @@ func (r *replicator) loop() {
 		case leader:
 			r.leaderSelect()
 		default:
-			panic(fmt.Sprintf("unknown Server State '%s'", state))
+			r.logger.Println(fmt.Sprintf("unknown Server State '%s'", state))
 		}
 	}
 }
 
 //send heartbeat to peers after each broadcast interval
 func broadcastInterval() time.Duration {
-	d := MinimumElectionTimeoutMs / 10
+	d := MinimumElectionTimeoutMs / 5
 	return time.Duration(d) * time.Millisecond
 }
 
-func (r replicator) sendHeartBeat() {
-	msg := &heartbeat{Id: uint64(r.s.Pid()), Term: r.term}
-	r.s.Outbox() <- &cluster.Envelope{Pid: -1, Msg: msg}
+func (r replicator) newNextIndex(defaultNextIndex uint64) *nextIndex {
+	ni := &nextIndex{
+		m: map[uint64]uint64{},
+	}
+	for _, id := range r.s.Peers() {
+		ni.m[uint64(id)] = defaultNextIndex
+	}
+
+	return ni
+}
+
+func (ni *nextIndex) prevLogIndex(id uint64) uint64 {
+	ni.RLock()
+	defer ni.RUnlock()
+	if _, ok := ni.m[id]; !ok {
+		panic(fmt.Sprintf("peer %d not found", id))
+
+	}
+	return ni.m[id]
+}
+
+func (ni *nextIndex) decrement(id uint64, prev uint64) (uint64, error) {
+	ni.Lock()
+	defer ni.Unlock()
+
+	i, ok := ni.m[id]
+	if !ok {
+		panic(fmt.Sprintf("peer %d not found", id))
+	}
+
+	if i != prev {
+		return i, errOutOfSync
+	}
+
+	if i > 0 {
+		ni.m[id]--
+	}
+	return ni.m[id], nil
+}
+
+func (r replicator) flush(id int, ni *nextIndex, timeout time.Duration) error {
+	currentTerm := r.term
+	prevLogIndex := ni.prevLogIndex(uint64(id))
+	entries, prevLogTerm := r.log.entriesAfter(prevLogIndex)
+	commitIndex := r.log.getCommitIndex()
+
+	msg := &appendEntries{Term: currentTerm, LeaderId: uint64(r.s.Pid()), PrevLogIndex: prevLogIndex,
+		PrevLogTerm: prevLogTerm,
+		Entries:     entries,
+		CommitIndex: commitIndex}
+	r.s.Outbox() <- &cluster.Envelope{Pid: id, Msg: msg}
+
+	select {
+
+	case t := <-r.s.Inbox():
+
+		switch t.Msg.(type) {
+
+		case appendEntriesResponse:
+			resp := t.Msg.(appendEntriesResponse)
+			r.logger.Println(resp)
+			if resp.Term > currentTerm {
+				return errDeposed
+			}
+
+			if !resp.Success {
+				newPrevLogIndex, err := ni.decrement(uint64(id), prevLogIndex)
+				if err != nil {
+					if debug {
+						log.Printf("flush to %v: while decrementing prevLogIndex: %s", id, err)
+					}
+					return err
+				}
+				if debug {
+					log.Printf("flush to %v: rejected; prevLogIndex(%v) becomes %d", id, id, newPrevLogIndex)
+				}
+				return errappendEntriesRejected
+			}
+
+			if len(entries) > 0 {
+				newPrevLogIndex, err := ni.set(uint64(id), entries[len(entries)-1].Index, prevLogIndex)
+				if err != nil {
+					if debug {
+						log.Printf("flush to %v: while moving prevLogIndex forward: %s", id, err)
+					}
+					return err
+				}
+				if debug {
+					log.Printf("flush to %v: accepted; prevLogIndex(%v) becomes %d", id, id, newPrevLogIndex)
+				}
+				return nil
+			}
+			return nil
+
+		}
+
+	case <-time.After(timeout):
+		return errTimeout
+	}
+	return nil
+
+}
+
+func (ni *nextIndex) set(id, index, prev uint64) (uint64, error) {
+	ni.Lock()
+	defer ni.Unlock()
+
+	i, ok := ni.m[id]
+	if !ok {
+		panic(fmt.Sprintf("server %d not found", id))
+	}
+	if i != prev {
+		return i, errOutOfSync
+	}
+
+	ni.m[id] = index
+	return index, nil
+}
+
+func (r *replicator) concurrentReplicate(ni *nextIndex, timeout time.Duration) (int, bool) {
+	type tuple struct {
+		id  uint64
+		err error
+	}
+	responses := make(chan tuple, len(r.s.Peers()))
+	for _, id1 := range r.s.Peers() {
+
+		go func(id int) {
+			errChan := make(chan error, 1)
+			go func() { errChan <- r.flush(id, ni, timeout) }()
+			responses <- tuple{uint64(id), <-errChan} // first responder wins
+
+		}(id1)
+
+	}
+
+	successes, stepDown := 0, false
+	for i := 0; i < cap(responses); i++ {
+		switch t := <-responses; t.err {
+		case nil:
+			successes++
+		case errDeposed:
+			stepDown = true
+		default:
+		}
+	}
+	return successes, stepDown
+}
+
+func (ni *nextIndex) bestIndex() uint64 {
+	ni.RLock()
+	defer ni.RUnlock()
+
+	if len(ni.m) <= 0 {
+		return 0
+	}
+
+	var i uint64 = math.MaxUint64
+	for _, nextIndex := range ni.m {
+		if nextIndex < i {
+			i = nextIndex
+		}
+	}
+	return i
 }
 
 // for leaderstate
 func (r *replicator) leaderSelect() {
 	if r.leader != uint64(r.s.Pid()) {
-		panic(fmt.Sprintf("leader (%d) not me (%d) when entering leaderSelect", r.leader, r.s.Pid()))
+		r.logger.Println(fmt.Sprintf("leader (%d) not me (%d) when entering leaderSelect", r.leader, r.s.Pid()))
 	}
 	if r.vote != 0 {
-		panic(fmt.Sprintf("vote (%d) not zero when entering leaderSelect", r.leader, r.s.Pid()))
+		r.logger.Println(fmt.Sprintf("vote (%d) not zero when entering leaderSelect", r.leader, r.s.Pid()))
 	}
-
+	nIndex := r.newNextIndex(r.log.lastIndex()) // +1)
+	replicate := make(chan struct{})
+	//go r.listenFlush(replicate,nIndex)
 	hbeat := time.NewTicker(broadcastInterval())
 	defer hbeat.Stop()
 	go func() {
 		for _ = range hbeat.C {
-			r.sendHeartBeat()
+			replicate <- struct{}{}
 		}
 	}()
 
@@ -302,9 +478,72 @@ func (r *replicator) leaderSelect() {
 		case q := <-r.quit:
 			r.handleQuit(q)
 			return
+		case t := <-r.command_outchan:
+			cmd := t.(CommandTuple)
+			// Append the command to our (leader) log
+			r.logger.Println("got command, appending")
+			currentTerm := r.term
+			entry := LogItem{
+				Index:           r.log.lastIndex() + 1,
+				Term:            currentTerm,
+				Command:         cmd.Command,
+				commandResponse: cmd.CommandResponse,
+			}
+			r.logger.Println(entry)
+			if err := r.log.appendEntry(entry); err != nil {
+				panic(err)
+				continue
+			}
 
+			r.logger.Printf(
+				"after append, commitIndex=%d lastIndex=%d lastTerm=%d",
+				r.log.getCommitIndex(),
+				r.log.lastIndex(),
+				r.log.lastTerm(),
+			)
+
+			// Now that the entry is in the log, we can fall back to the
+			// normal flushing mechanism to attempt to replicate the entry
+			// and advance the commit index. We trigger a manual flush as a
+			// convenience, so our caller might get a response a bit sooner.
+			//replicate <- struct{}{} 
+			//cmd.Err <- nil
+
+		case <-replicate:
+			if debug {
+				r.logger.Println("I am leader", r.s.Pid(), "Term", r.term)
+			}
+			successes, stepDown := r.concurrentReplicate(nIndex, 2*broadcastInterval())
+			if stepDown {
+				r.logger.Println("deposed during replicate")
+				r.state.Set(follower)
+				r.leader = unknownLeader
+				return
+			}
+			r.logger.Println(successes, ":", quorum)
+			if successes >= quorum {
+				peersBestIndex := nIndex.bestIndex()
+				ourLastIndex := r.log.lastIndex()
+				ourCommitIndex := r.log.getCommitIndex()
+				if peersBestIndex > ourLastIndex {
+					r.leader = unknownLeader
+					r.vote = noVote
+					r.state.Set(follower)
+					return
+				}
+				if peersBestIndex > ourCommitIndex {
+					if err := r.log.commitTo(peersBestIndex); err != nil {
+						r.logger.Printf("commitTo(%d): %s", peersBestIndex, err)
+						continue // oh well, next time?
+					}
+					if r.log.getCommitIndex() > ourCommitIndex {
+						r.logger.Printf("after commitTo(%d), commitIndex=%d -- queueing another flush", peersBestIndex, r.log.getCommitIndex())
+						//go func() { replicate <- struct{}{} }()
+					}
+				}
+			}
+			r.logger.Println("all went well")
 		case t := <-r.s.Inbox():
-			//mType := msg["MsgType"].(float64)
 
 			switch t.Msg.(type) {
 			case voteRequest:
@@ -314,10 +553,12 @@ func (r *replicator) leaderSelect() {
 				r.s.Outbox() <- &cluster.Envelope{Pid: int(req.CandidateID), Msg: resp}
 				if stepDown {
 					if r.leader != unknownLeader {
-						log.Printf("abandoning old leader=%d\n", r.leader)
+						if debug {
+							r.logger.Printf("abandoning old leader=%d\n", r.leader)
+						}
 					}
 					if debug {
-						log.Println("new leader unknown", r.s.Pid())
+						r.logger.Println("new leader unknown", r.s.Pid())
 					}
 					r.leader = unknownLeader
 					r.state.Set(follower)
@@ -326,14 +567,16 @@ func (r *replicator) leaderSelect() {
 			case voteResponse:
 				//res :=t.Msg.(*voteResponse)
 
-			case heartbeat:
-				res := t.Msg.(heartbeat)
+			case appendEntries:
+				res := t.Msg.(appendEntries)
 				if debug {
-					log.Println("Error:two server in", "server ids", r.s.Pid(), res.Id, "terms", r.term, ":", res.Term)
+					r.logger.Println("Error:two server in", "server ids", r.s.Pid(), res.LeaderId, "terms", r.term, ":", res.Term)
 				}
-				stepDown := r.handleHeartbeat(res)
+				resp, stepDown := r.handleAppendEntries(res)
+				//r.logappendEntriesResponse(res, *resp, stepDown)
+				r.s.Outbox() <- &cluster.Envelope{Pid: int(res.LeaderId), Msg: resp}
 				if stepDown {
-					r.leader = res.Id
+					r.leader = res.LeaderId
 					r.state.Set(follower)
 					return
 				}
@@ -346,38 +589,94 @@ func (r *replicator) leaderSelect() {
 }
 
 // heartbeat from sevrer recieved
-func (r *replicator) handleHeartbeat(res heartbeat) bool {
+func (r *replicator) handleAppendEntries(res appendEntries) (*appendEntriesResponse, bool) {
 
 	if res.Term < r.term {
-		return false
+		return &appendEntriesResponse{
+			Term:    r.term,
+			Success: false,
+			reason:  fmt.Sprintf("Term %d < %d", res.Term, r.term),
+		}, false
 	}
 	stepDown := false
 	if res.Term > r.term {
 
 		r.term = res.Term
 		r.vote = noVote
-		log.Println("leader updated to ", res.Id)
+		stepDown = true
 		if debug {
+			r.logger.Println("leader updated to ", res.LeaderId)
+
 			if r.state.Get() == leader {
-				log.Println("server shud stepdown", r.s.Pid(), ":", r.term)
+				r.logger.Println("server shud stepdown", r.s.Pid(), ":", r.term)
 			}
 			if r.state.Get() != leader {
-				log.Println("update term to ", res.Term)
+				r.logger.Println("update term to ", res.Term)
 			}
 		}
-		return true
+		//return true
 	}
-
-	if r.state.Get() == candidate && res.Id != r.leader && res.Term >= r.term {
+	if r.state.Get() == candidate && res.LeaderId != r.leader && res.Term >= r.term {
 		r.term = res.Term
 		r.vote = noVote
-		return true
+		stepDown = true
 	}
-	if r.leader == unknownLeader {
-		r.leader = res.Id
-	}
+
 	r.resetElectionTimeout()
-	return stepDown
+
+	// Reject if log doesn't contain a matching previous entry
+	if err := r.log.discardUpto(res.PrevLogIndex, res.PrevLogTerm); err != nil {
+		r.logger.Println("all notgood")
+		return &appendEntriesResponse{
+			Term:    r.term,
+			Success: false,
+			reason:  fmt.Sprintf("while ensuring last log entry had index=%d term=%d: error: %s", res.PrevLogIndex, res.PrevLogTerm, err)}, stepDown
+	}
+	// Process the entries
+	for i, entry := range res.Entries {
+
+		// Append entry to the log
+		if err := r.log.appendEntry(entry); err != nil {
+			return &appendEntriesResponse{
+				Term:    r.term,
+				Success: false,
+				reason: fmt.Sprintf(
+					"AppendEntry %d/%d failed: %s",
+					i+1,
+					len(res.Entries),
+					err,
+				),
+			}, stepDown
+		}
+
+	}
+
+	// Commit up to the commit index.
+	//
+	// < ptrb> ongardie: if the new leader sends a 0-entry appendEntries
+	// with lastIndex=5 commitIndex=4, to a follower that has lastIndex=5
+	// commitIndex=5 -- in my impl, this fails, because commitIndex is too
+	// small. shouldn't be?
+	// <@ongardie> ptrb: i don't think that should fail
+	// <@ongardie> there are 4 ways an appendEntries request can fail: (1)
+	// network drops packet (2) caller has stale term (3) would leave gap in
+	// the recipient's log (4) term of entry preceding the new entries doesn't
+	// match the term at the same index on the recipient
+	//
+	if res.CommitIndex > 0 && res.CommitIndex > r.log.getCommitIndex() {
+		if err := r.log.commitTo(res.CommitIndex); err != nil {
+			return &appendEntriesResponse{
+				Term:    r.term,
+				Success: false,
+				reason:  fmt.Sprintf("CommitTo(%d) failed: %s", res.CommitIndex, err),
+			}, stepDown
+		}
+	}
+
+	return &appendEntriesResponse{
+		Term:    r.term,
+		Success: true,
+	}, stepDown
 
 }
 
@@ -385,32 +684,32 @@ func (r *replicator) handleHeartbeat(res heartbeat) bool {
 func (r *replicator) candidateSelect() {
 
 	if r.leader != unknownLeader {
-		panic("known leader when entering candidateSelect")
+		r.logger.Println("known leader when entering candidateSelect")
 	}
 	if r.vote != 0 {
 		if debug {
-			log.Println(r.s.Pid(), ":", r.state)
+			r.logger.Println(r.s.Pid(), ":", r.state)
 		}
-		panic("existing vote when entering candidateSelect")
+		r.logger.Println("existing vote when entering candidateSelect")
 	}
 	r.generateVoteRequest()
 
 	voting := protectedVotes{votes: map[uint64]bool{uint64(r.s.Pid()): true}}
 	r.vote = uint64(r.s.Pid())
 	if debug {
-		log.Printf("term=%d election started\n", r.term)
+		r.logger.Printf("term=%d election started\n", r.term)
 	}
 	for {
 		select {
 		case q := <-r.quit:
 			if debug {
-				log.Println("quit")
+				r.logger.Println("quit")
 			}
 			r.handleQuit(q)
 			return
 		case <-r.electionTick:
 			if debug {
-				log.Println("election ended with no winner; incrementing term and trying again ", r.s.Pid())
+				r.logger.Println("election ended with no winner; incrementing term and trying again ", r.s.Pid())
 			}
 			r.resetElectionTimeout()
 			r.term++
@@ -427,22 +726,26 @@ func (r *replicator) candidateSelect() {
 					// stepDown as a Follower means just to reset the leader
 					if r.leader != unknownLeader {
 						if debug {
-							log.Printf("abandoning old leader=%d\n", r.leader)
+							r.logger.Printf("abandoning old leader=%d\n", r.leader)
 						}
 					}
 					if debug {
-						log.Println("new leader unknown")
+						r.logger.Println("new leader unknown")
 					}
 					r.leader = unknownLeader
 					r.state.Set(follower)
 					return
 				}
-			case heartbeat:
-				res := t.Msg.(heartbeat)
-				log.Println("leader is up and running ", res.Id)
-				stepDown := r.handleHeartbeat(res)
+			case appendEntries:
+				res := t.Msg.(appendEntries)
+				if debug {
+					r.logger.Println("leader is up and running ", res.LeaderId)
+				}
+				resp, stepDown := r.handleAppendEntries(res)
+				//r.logger.Println("leader msg came", res.LeaderId)
+				r.s.Outbox() <- &cluster.Envelope{Pid: int(res.LeaderId), Msg: resp}
 				if stepDown {
-					r.leader = res.Id
+					r.leader = res.LeaderId
 					r.state.Set(follower)
 					return
 				}
@@ -453,7 +756,7 @@ func (r *replicator) candidateSelect() {
 				//r.responseVoteChan <- t.msg.Response	
 				if res.Term > r.term {
 					if debug {
-						log.Printf("got vote from future term (%d>%d); abandoning election\n", res.Term, r.term)
+						r.logger.Printf("got vote from future term (%d>%d); abandoning election\n", res.Term, r.term)
 					}
 					r.leader = unknownLeader
 					r.state.Set(follower)
@@ -462,13 +765,13 @@ func (r *replicator) candidateSelect() {
 				}
 				if res.Term < r.term {
 					if debug {
-						log.Printf("got vote from past term (%d<%d); ignoring\n", res.Term, r.term)
+						r.logger.Printf("got vote from past term (%d<%d); ignoring\n", res.Term, r.term)
 					}
 					break
 				}
 				if res.VoteGranted {
 					if debug {
-						log.Printf("%d voted for me\n", t.Pid)
+						r.logger.Printf("%d voted for me\n", t.Pid)
 					}
 					voting.Lock()
 					voting.votes[uint64(t.Pid)] = true
@@ -477,7 +780,7 @@ func (r *replicator) candidateSelect() {
 				// "Once a candidate wins an election, it becomes leader."
 				if r.pass(voting) {
 					if debug {
-						log.Println("I won the election", r.s.Pid())
+						r.logger.Println("I won the election", r.s.Pid())
 					}
 					r.isLeader.Set(true)
 					r.leader = uint64(r.s.Pid())
@@ -517,11 +820,13 @@ func (r replicator) pass(voting protectedVotes) bool {
 func (r replicator) generateVoteRequest() {
 
 	msg := &voteRequest{
-		Term:        r.term,
-		CandidateID: uint64(r.s.Pid()),
+		Term:         r.term,
+		CandidateID:  uint64(r.s.Pid()),
+		LastLogIndex: r.log.lastIndex(),
+		LastLogTerm:  r.log.lastTerm(),
 	}
 	if debug {
-		log.Println("generate vote request ", r.s.Pid())
+		r.logger.Println("generate vote request ", r.s.Pid())
 	}
 	r.s.Outbox() <- &cluster.Envelope{Pid: -1, Msg: msg}
 }
@@ -535,7 +840,7 @@ func (r *replicator) followerSelect() {
 			return
 		case <-r.electionTick:
 			if debug {
-				log.Println("election timeout, becoming candidate", r.s.Pid())
+				r.logger.Println("election timeout, becoming candidate", r.s.Pid())
 			}
 			r.term++
 			r.vote = noVote
@@ -557,7 +862,9 @@ func (r *replicator) followerSelect() {
 				if stepDown {
 					// stepDown as a Follower means just to reset the leader
 					if r.leader != unknownLeader {
-						log.Printf("abandoning old leader=%d", r.leader)
+						if debug {
+							r.logger.Printf("abandoning old leader=%d", r.leader)
+						}
 					}
 					//log.Println("new leader unknown")
 					r.leader = unknownLeader
@@ -565,13 +872,32 @@ func (r *replicator) followerSelect() {
 			case voteResponse:
 				//res := t.Msg.(*voteResponse)
 
-			case heartbeat:
-				res := t.Msg.(heartbeat)
-				stepDown := r.handleHeartbeat(res)
-				log.Println("for ", r.s.Pid(), "leader is up and running ", res.Id, res.Term, r.term, r.leader)
+			case appendEntries:
+				res := t.Msg.(appendEntries)
+				if r.leader == unknownLeader {
+					r.leader = res.LeaderId
+					if debug {
+						r.logger.Printf("discovered Leader %d", res.LeaderId)
+					}
+				}
+				r.logger.Println("leader msg came", res.LeaderId)
+				resp, stepDown := r.handleAppendEntries(res)
+				r.s.Outbox() <- &cluster.Envelope{Pid: int(res.LeaderId), Msg: resp}
+				if debug {
+					r.logger.Println("for ", r.s.Pid(), "leader is up and running ", res.LeaderId, res.Term, r.term, r.leader)
+				}
 				if stepDown {
-					r.leader = res.Id
-					r.state.Set(follower)
+					if r.leader != unknownLeader {
+						if debug {
+							r.logger.Printf("abandoning old leader=%d", r.leader)
+						}
+					}
+					if debug {
+						r.logger.Printf("following new leader=%d", res.LeaderId)
+					}
+
+					r.leader = res.LeaderId
+
 					return
 				}
 
@@ -592,7 +918,9 @@ func (r *replicator) handleRequestVote(req voteRequest) (*voteResponse, bool) {
 
 	stepDown := false
 	if req.Term > r.term {
-		log.Printf("requestVote from newer term (%d): we defer %d", req.Term, r.s.Pid())
+		if debug {
+			r.logger.Printf("requestVote from newer term (%d): we defer %d", req.Term, r.s.Pid())
+		}
 		r.term = req.Term
 		r.vote = noVote
 		r.leader = unknownLeader
@@ -608,11 +936,25 @@ func (r *replicator) handleRequestVote(req voteRequest) (*voteResponse, bool) {
 
 	if r.vote != 0 && r.vote != req.CandidateID {
 		if stepDown {
-			panic("impossible state in handleRequestVote")
+			r.logger.Println("impossible state in handleRequestVote")
 		}
 		return &voteResponse{
 			Term:        r.term,
 			VoteGranted: false,
+		}, stepDown
+	}
+
+	if r.log.lastIndex() > req.LastLogIndex || r.log.lastTerm() > req.LastLogTerm {
+		return &voteResponse{
+			Term:        r.term,
+			VoteGranted: false,
+			reason: fmt.Sprintf(
+				"our index/term %d/%d > %d/%d",
+				r.log.lastIndex(),
+				r.log.lastTerm(),
+				req.LastLogIndex,
+				req.LastLogTerm,
+			),
 		}, stepDown
 	}
 
@@ -647,7 +989,7 @@ func electionTimeout() time.Duration {
 //to stop the sevrer
 func (r *replicator) handleQuit(q chan struct{}) {
 	if debug {
-		log.Println("server stopped ", r.s.Pid())
+		r.logger.Println("server stopped ", r.s.Pid())
 	}
 	r.running.Set(false)
 	close(q)

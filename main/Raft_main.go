@@ -12,6 +12,7 @@ import (
 	"net/rpc"
 	"os"
 	"strings"
+	
 	"time"
 )
 
@@ -85,10 +86,14 @@ func main() {
 			}
 		}()
 	
-
+	logfile := os.Getenv("GOPATH") + "/src/github.com/nilangshah/Raft/Raftlog/log" + strconv.Itoa(*myid)
+		f, err := os.OpenFile(logfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			panic(fmt.Sprintf("error opening file: %v", err))
+		}
 	path := GetPath() + "/src/github.com/nilangshah/Raft/cluster/config.json"
 	server1 = cluster.New(*myid, path)
-	replicator = Raft.New(server1, path)
+	replicator = Raft.New(server1,f, path)
 	replicator.Start()
 	fmt.Println(*myid)
 		
