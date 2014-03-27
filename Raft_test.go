@@ -85,7 +85,7 @@ func TestElection_1(t *testing.T) {
 	}
 
 	select {
-	case <-time.After(12 * time.Second):
+	case <-time.After(8 * time.Second):
 		rpc_call()
 
 	}
@@ -127,7 +127,7 @@ func rpc_call() (uint64, uint64) {
 				}
 
 			}
-			log.Println(reply[i-1])
+			//log.Println(reply[i-1])
 			client.Close()
 		}
 
@@ -163,7 +163,7 @@ func TestElection_2(t *testing.T) {
 
 	_, killed_Leader := rpc_call()
 
-	fmt.Println("Kill Leader", killed_Leader)
+	//fmt.Println("Kill Leader", killed_Leader)
 
 	wg.Add(1)
 	go KillServer(wg, cmd, int(killed_Leader-1), false)
@@ -203,12 +203,12 @@ func TestElection_3(t *testing.T) {
 	wg = new(sync.WaitGroup)
 	for i := 0; i < 3; i++ {
 		select {
-		case <-time.After(8 * time.Second):
+		case <-time.After(2 * time.Second):
 		}
 
 		_, killed_Leader := rpc_call()
 
-		fmt.Println("Kill Leader", killed_Leader)
+//		fmt.Println("Kill Leader", killed_Leader)
 
 		wg.Add(1)
 		KillServer(wg, cmd, int(killed_Leader-1), false)

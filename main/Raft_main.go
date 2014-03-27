@@ -54,7 +54,7 @@ type LeaderInfo struct {
 var replicator Raft.Replicator
 
 func (t *RaftTest) LeaderInfo(args *Args, reply *LeaderInfo) error {
-	log.Println(replicator.Term(),replicator.GetLeader(),replicator.IsLeader())
+	//log.Println(replicator.Term(),replicator.GetLeader(),replicator.IsLeader())
 	reply.Term=replicator.Term()
 	reply.Pid=replicator.GetLeader()
 	return nil

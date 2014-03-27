@@ -26,7 +26,7 @@ const (
 	follower  = "Follower"
 	candidate = "Candidate"
 	leader    = "Leader"
-	debug     = false
+	debug     = true
 )
 
 //constants
@@ -502,11 +502,7 @@ func (r *replicator) leaderSelect() {
 				r.log.lastTerm(),
 			)
 
-			// Now that the entry is in the log, we can fall back to the
-			// normal flushing mechanism to attempt to replicate the entry
-			// and advance the commit index. We trigger a manual flush as a
-			// convenience, so our caller might get a response a bit sooner.
-			//replicate <- struct{}{} 
+			go func() { replicate <- struct{}{} }()
 			//cmd.Err <- nil
 
 		case <-replicate:
@@ -538,11 +534,10 @@ func (r *replicator) leaderSelect() {
 					}
 					if r.log.getCommitIndex() > ourCommitIndex {
 						r.logger.Printf("after commitTo(%d), commitIndex=%d -- queueing another flush", peersBestIndex, r.log.getCommitIndex())
-						//go func() { replicate <- struct{}{} }()
+						go func() { replicate <- struct{}{} }()
 					}
 				}
 			}
-			r.logger.Println("all went well")
 		case t := <-r.s.Inbox():
 
 			switch t.Msg.(type) {
@@ -880,7 +875,7 @@ func (r *replicator) followerSelect() {
 						r.logger.Printf("discovered Leader %d", res.LeaderId)
 					}
 				}
-				r.logger.Println("leader msg came", res.LeaderId)
+				//r.logger.Println("leader msg came", res.LeaderId)
 				resp, stepDown := r.handleAppendEntries(res)
 				r.s.Outbox() <- &cluster.Envelope{Pid: int(res.LeaderId), Msg: resp}
 				if debug {

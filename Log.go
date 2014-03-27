@@ -221,6 +221,7 @@ func (l *raftLog) appendEntry(entry LogItem) error {
 	if len(l.entries) > 0 {
 		lastTerm := l.lastTerm()
 		if entry.Term < lastTerm {
+			fmt.Println(entry.Term,lastTerm)
 			return errTermIsSmall
 		}
 		lastIndex := l.lastIndex()
