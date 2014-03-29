@@ -74,17 +74,17 @@ func (l *raftLog) entriesAfter(index uint64) ([]LogItem, uint64) {
 		return []LogItem{}, lastTerm
 	}
 
-	return stripResponseChannels(a), lastTerm
+	return closeResponseChannels(a), lastTerm
 }
 
-func stripResponseChannels(a []LogItem) []LogItem {
+func closeResponseChannels(a []LogItem) []LogItem {
 	stripped := make([]LogItem, len(a))
 	for i, entry := range a {
 		stripped[i] = LogItem{
-			Index:           entry.Index,
-			Term:            entry.Term,
-			Command:         entry.Command,
-			commandResponse: nil,
+			Index:     entry.Index,
+			Term:      entry.Term,
+			Command:   entry.Command,
+			committed: nil,
 		}
 	}
 	return stripped
@@ -138,10 +138,7 @@ func (l *raftLog) discardUpto(index, term uint64) error {
 
 	if index == 0 {
 		for pos := 0; pos < len(l.entries); pos++ {
-			if l.entries[pos].commandResponse != nil {
-				close(l.entries[pos].commandResponse)
-				l.entries[pos].commandResponse = nil
-			}
+
 			if l.entries[pos].committed != nil {
 				l.entries[pos].committed <- false
 				close(l.entries[pos].committed)
@@ -178,10 +175,7 @@ func (l *raftLog) discardUpto(index, term uint64) error {
 	}
 
 	for pos = truncateFrom; pos < len(l.entries); pos++ {
-		if l.entries[pos].commandResponse != nil {
-			close(l.entries[pos].commandResponse)
-			l.entries[pos].commandResponse = nil
-		}
+
 		if l.entries[pos].committed != nil {
 			l.entries[pos].committed <- false
 			close(l.entries[pos].committed)
@@ -221,7 +215,7 @@ func (l *raftLog) appendEntry(entry LogItem) error {
 	if len(l.entries) > 0 {
 		lastTerm := l.lastTerm()
 		if entry.Term < lastTerm {
-			fmt.Println(entry.Term,lastTerm)
+			fmt.Println(entry.Term, lastTerm)
 			return errTermIsSmall
 		}
 		lastIndex := l.lastIndex()
@@ -265,7 +259,7 @@ func (l *raftLog) commitTo(commitIndex uint64) error {
 		if err := l.entries[pos].writeToFile(l.writer); err != nil {
 			return err
 		}
-
+		fmt.Println("commit too")
 		if l.entries[pos].committed != nil {
 			l.entries[pos].committed <- true
 			close(l.entries[pos].committed)

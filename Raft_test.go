@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	unknown = 1000
-	unknwon_leader=0
+	unknown        = 1000
+	unknwon_leader = 0
 )
 
 var wg *sync.WaitGroup
@@ -67,8 +67,11 @@ func TestElection_1(t *testing.T) {
 		cmd[i-1] = exec.Command(path, "-id", strconv.Itoa(i))
 		cmd[i-1].Start()
 	}
-	
 	a := 0
+	select {
+	case <-time.After(3 * time.Second):
+
+	}
 	for j := 0; j < 5; j = j + 2 {
 		wg.Add(1)
 
@@ -123,7 +126,7 @@ func rpc_call() (uint64, uint64) {
 					fmt.Println(term_Leader, reply[i-1].Term, pid_Leader, reply[i-1].Pid)
 					// kill_all_server(cmd)
 					fmt.Println("diffrent term or leader exist")
-					
+
 				}
 
 			}
@@ -177,9 +180,9 @@ func TestElection_2(t *testing.T) {
 
 		if new_Leader == killed_Leader {
 			fmt.Println(new_Leader, " ", killed_Leader)
-			 kill_all_server(cmd)
+			kill_all_server(cmd)
 			panic("no leader not elected")
-			
+
 		}
 	}
 	path := GetPath() + "/bin/main"
@@ -188,9 +191,6 @@ func TestElection_2(t *testing.T) {
 		cmd[int(killed_Leader)-1] = exec.Command(path, "-id", strconv.Itoa(int(killed_Leader)))
 		cmd[int(killed_Leader)-1].Start()
 	}
-
-	
-
 
 	return
 
@@ -203,12 +203,12 @@ func TestElection_3(t *testing.T) {
 	wg = new(sync.WaitGroup)
 	for i := 0; i < 3; i++ {
 		select {
-		case <-time.After(2 * time.Second):
+		case <-time.After(7 * time.Second):
 		}
 
 		_, killed_Leader := rpc_call()
 
-//		fmt.Println("Kill Leader", killed_Leader)
+		//		fmt.Println("Kill Leader", killed_Leader)
 
 		wg.Add(1)
 		KillServer(wg, cmd, int(killed_Leader-1), false)
@@ -216,26 +216,26 @@ func TestElection_3(t *testing.T) {
 		var new_Leader uint64
 		new_Leader = unknown
 		select {
-		case <-time.After(8 * time.Second):
+		case <-time.After(7 * time.Second):
 
 			_, new_Leader = rpc_call()
 
 			if new_Leader == killed_Leader {
 				fmt.Println(new_Leader, " ", killed_Leader)
-				 kill_all_server(cmd)
+				kill_all_server(cmd)
 				panic("no leader not elected")
-				
+
 			}
 		}
 	}
 	select {
-	case <-time.After(2 * time.Second):
+	case <-time.After(1 * time.Second):
 		final_term, final_Leader := rpc_call()
-		if final_Leader==unknwon_leader{
-		fmt.Println("Term", final_term, "Leader", final_Leader)
-		}else{
-			 kill_all_server(cmd)
-			panic("leader still exist")		
+		if final_Leader == unknwon_leader {
+			fmt.Println("Term", final_term, "Leader", final_Leader)
+		} else {
+			kill_all_server(cmd)
+			panic("leader still exist")
 		}
 	}
 	/*path := GetPath() + "/bin/main"
@@ -247,16 +247,16 @@ func TestElection_3(t *testing.T) {
 	*/
 	select {
 	case <-time.After(2 * time.Second):
-		 kill_all_server(cmd)
+		kill_all_server(cmd)
 	}
 	return
 
 }
 
-func kill_all_server(cmd []*exec.Cmd){
+func kill_all_server(cmd []*exec.Cmd) {
 	for i := 1; i < 6; i++ {
-			cmd[i-1].Process.Kill()
-			cmd[i-1].Wait()
-		}
+		cmd[i-1].Process.Kill()
+		cmd[i-1].Wait()
+	}
 
 }

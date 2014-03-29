@@ -32,7 +32,7 @@ func getkeyval(item string) (key, val string) {
 
 func main() {
 	fmt.Println("hello")
-	out := make(chan int)
+	//out:=make(chan int)
 	path := GetPath() + "/src/github.com/nilangshah/Raft/cluster/config.json"
 	replicator := make([]Raft.Replicator, 5)
 	server := make([]cluster.Server, 5)
@@ -51,21 +51,20 @@ func main() {
 		replicator[i] = Raft.New(server[i], f, path)
 		replicator[i].Start()
 	}
-	leader_id := 0
+	//leader_id := 0
 	select {
-	case <-time.After(5 * time.Second):
-		for i := 0; i < 5; i++ {
+	case <-time.After(20 * time.Second):
+		/*for i := 0; i < 5; i++ {
 			leader_id = int(replicator[i].GetLeader())
-		}
+		}*/
 
 	}
-	response := make(chan<- []byte)
-	command := Raft.CommandTuple{Command: []byte("hello how r you?"), CommandResponse: response}
-	replicator[leader_id-1].Outbox() <- command
+	//response := make(chan bool)
+	//command := Raft.CommandTuple{Command: []byte("hello how r you?"), CommandResponse: response}
+	//replicator[leader_id-1].Outbox() <- command
 	select {
-	case <-time.After(5 * time.Second):
+	case <-time.After(1000 * time.Second):
 		fmt.Println("raft run done")
 	}
-	<-out
 
 }

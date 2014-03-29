@@ -10,58 +10,47 @@ type requestVoteTuple struct {
 	Response chan voteResponse
 }
 
-// appendEntries represents an appendEntries RPC.
 type appendEntries struct {
-	Term         uint64     `json:"term"`
-	LeaderId     uint64     `json:"leader_id"`
-	PrevLogIndex uint64     `json:"prev_log_index"`
-	PrevLogTerm  uint64     `json:"prev_log_term"`
-	Entries      []LogItem `json:"entries"`
-	CommitIndex  uint64     `json:"commit_index"`
+	Term         uint64
+	LeaderId     uint64
+	PrevLogIndex uint64
+	PrevLogTerm  uint64
+	Entries      []LogItem
+	CommitIndex  uint64
 }
 
 // appendEntriesResponse represents the response to an appendEntries RPC.
 type appendEntriesResponse struct {
-	Term    uint64 `json:"term"`
-	Success bool   `json:"success"`
+	Term    uint64
+	Success bool
 	reason  string
 }
 
-// requestVote represents a requestVote RPC.
 type voteRequest struct {
-	Term         uint64 `json:"term"`
+	Term uint64
 	//id of the candidate	
-	CandidateID  uint64 `json:"candidate_id"`
-	LastLogIndex uint64 `json:"last_log_index"`
-	LastLogTerm  uint64 `json:"last_log_term"`
+	CandidateID  uint64
+	LastLogIndex uint64
+	LastLogTerm  uint64
 }
 
-// requestVoteResponse represents the response to a requestVote RPC.
-type voteResponse struct {	
-	Term        uint64 `json:"term"`
+type voteResponse struct {
+	Term uint64
 	// vote granted or not
-	VoteGranted bool   `json:"vote_granted"`
+	VoteGranted bool
 	reason      string
 }
 
-
 type CommandTuple struct {
-Command []byte
-CommandResponse chan<- []byte
-Err chan error
+	Command         []byte
+	CommandResponse chan bool
+	Err             chan error
 }
 
-// logEntry is the atomic unit being managed by the distributed log. A log entry
-// always has an index (monotonically increasing), a term in which the Raft
-// network leader first sees the entry, and a command. The command is what gets
-// executed against the node state machine when the log entry is successfully
-// replicated.
 type LogItem struct {
-	Index uint64 `json:"index"`
-	Term uint64 `json:"term"` // when received by leader
-	Command []byte `json:"command,omitempty"`
-	committed chan bool `json:"-"`
-	commandResponse chan<- []byte `json:"-"` // only non-nil on receiver's log
-	//isConfiguration bool `json:"-"` // for configuration change entries
-}
+	Index   uint64
+	Term    uint64 // when received by leader
+	Command []byte
 
+	committed chan bool
+}

@@ -227,7 +227,7 @@ func New(server cluster.Server, store io.ReadWriter, fileName string) Replicator
 	} else {
 		//defer f.Close()
 
-		//log.SetOutput(f)
+		log.SetOutput(f)
 	}
 	//}
 	//////////////////////////////	
@@ -257,7 +257,8 @@ func New(server cluster.Server, store io.ReadWriter, fileName string) Replicator
 			break
 		}
 	}
-
+	r.term = latestTerm
+	//r.logger.Println(r.term)
 	r.resetElectionTimeout()
 	return r
 }
@@ -384,7 +385,7 @@ func (r replicator) flush(id int, ni *nextIndex, timeout time.Duration) error {
 
 		}
 
-	case <-time.After(timeout):
+	case <-time.After(2 * timeout):
 		return errTimeout
 	}
 	return nil
@@ -481,13 +482,13 @@ func (r *replicator) leaderSelect() {
 		case t := <-r.command_outchan:
 			cmd := t.(CommandTuple)
 			// Append the command to our (leader) log
-			r.logger.Println("got command, appending")
+			r.logger.Println("got command, appending", r.term)
 			currentTerm := r.term
 			entry := LogItem{
-				Index:           r.log.lastIndex() + 1,
-				Term:            currentTerm,
-				Command:         cmd.Command,
-				commandResponse: cmd.CommandResponse,
+				Index:     r.log.lastIndex() + 1,
+				Term:      currentTerm,
+				Command:   cmd.Command,
+				committed: cmd.CommandResponse,
 			}
 			r.logger.Println(entry)
 			if err := r.log.appendEntry(entry); err != nil {
@@ -502,7 +503,7 @@ func (r *replicator) leaderSelect() {
 				r.log.lastTerm(),
 			)
 
-			go func() { replicate <- struct{}{} }()
+			//go func() { replicate <- struct{}{} }()
 			//cmd.Err <- nil
 
 		case <-replicate:
@@ -516,7 +517,7 @@ func (r *replicator) leaderSelect() {
 				r.leader = unknownLeader
 				return
 			}
-			r.logger.Println(successes, ":", quorum)
+			//r.logger.Println(successes, ":", quorum)
 			if successes >= quorum {
 				peersBestIndex := nIndex.bestIndex()
 				ourLastIndex := r.log.lastIndex()
@@ -534,7 +535,7 @@ func (r *replicator) leaderSelect() {
 					}
 					if r.log.getCommitIndex() > ourCommitIndex {
 						r.logger.Printf("after commitTo(%d), commitIndex=%d -- queueing another flush", peersBestIndex, r.log.getCommitIndex())
-						go func() { replicate <- struct{}{} }()
+						//go func() { replicate <- struct{}{} }()
 					}
 				}
 			}
@@ -557,6 +558,7 @@ func (r *replicator) leaderSelect() {
 					}
 					r.leader = unknownLeader
 					r.state.Set(follower)
+					r.isLeader.Set(false)
 					return
 				}
 			case voteResponse:
@@ -621,7 +623,7 @@ func (r *replicator) handleAppendEntries(res appendEntries) (*appendEntriesRespo
 
 	// Reject if log doesn't contain a matching previous entry
 	if err := r.log.discardUpto(res.PrevLogIndex, res.PrevLogTerm); err != nil {
-		r.logger.Println("all notgood")
+		//r.logger.Println("all notgood")
 		return &appendEntriesResponse{
 			Term:    r.term,
 			Success: false,
@@ -780,6 +782,7 @@ func (r *replicator) candidateSelect() {
 					r.isLeader.Set(true)
 					r.leader = uint64(r.s.Pid())
 					r.state.Set(leader)
+					r.isLeader.Set(true)
 					r.vote = noVote
 					return // win
 				}
@@ -842,6 +845,7 @@ func (r *replicator) followerSelect() {
 			r.leader = unknownLeader
 			r.resetElectionTimeout()
 			r.state.Set(candidate)
+			r.isLeader.Set(false)
 
 			return
 
