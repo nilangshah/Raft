@@ -31,7 +31,7 @@ func newRaftLog(writer io.ReadWriter) *raftLog {
 	l := &raftLog{
 		writer:      writer,
 		entries:     []LogItem{},
-		commitIndex: -1, // no commits to begin with
+		commitIndex: -1, 
 	}
 	l.readFirst(writer)
 	return l
