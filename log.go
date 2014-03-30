@@ -1,14 +1,12 @@
 package Raft
 
 import (
+	"bytes"
 	"encoding/binary"
+	"encoding/gob"
 	"errors"
 	"fmt"
-	"hash/crc32"
-	"io"
-	"bufio"
-	//"log"
-	"os"
+	"github.com/syndtr/goleveldb/leveldb"
 	"sync"
 )
 
@@ -24,28 +22,28 @@ var (
 
 type raftLog struct {
 	sync.RWMutex
-	ApplyFunc    func(*LogItem) (interface{}, error)
-	writer       io.Writer
-	file         *os.File
-	entries      []*LogItem
-	commitIndex  uint64
-	initialIndex uint64
-	initialTerm  uint64
+	ApplyFunc   func(*LogItem) (interface{}, error)
+	db          *leveldb.DB
+	entries     []*LogItem
+	commitIndex uint64
+	initialTerm uint64
 }
 
-func newRaftLog(file1 *os.File) *raftLog {
-	l := &raftLog{
-		writer:       file1,
-		entries:      []*LogItem{},
-		file:         file1,
-		commitIndex:  0,
-		initialIndex: 0,
-		initialTerm:  0,
+func newRaftLog(dbPath string) *raftLog {
+
+	db, err := leveldb.OpenFile(dbPath, nil)
+	if err != nil {
+		panic(fmt.Sprintf("dir not exist,%v", err))
 	}
-	l.readFirst(file1)
+	l := &raftLog{
+		entries:     []*LogItem{},
+		db:          db,
+		commitIndex: 0,
+		initialTerm: 0,
+	}
+	l.readFirst()
 	return l
 }
-
 
 func (l *raftLog) currentIndex() uint64 {
 	l.RLock()
@@ -56,77 +54,77 @@ func (l *raftLog) currentIndex() uint64 {
 // The current index in the log without locking
 func (l *raftLog) CurrentIndexWithOutLock() uint64 {
 	if len(l.entries) == 0 {
-	return l.initialIndex
+		return 0
 	}
 	return l.entries[len(l.entries)-1].Index
 }
-
-
-
-
 
 // Closes the log file.
 func (l *raftLog) close() {
 	l.Lock()
 	defer l.Unlock()
 
-	if l.file != nil {
-		l.file.Close()
-		l.file = nil
-	}
+	l.db.Close()
 	l.entries = make([]*LogItem, 0)
 }
 
-func (l *raftLog) readFirst(r io.Reader) error {
-	var readBytes int64
-	readBytes = 0
-	for {
-		
-		entry :=new(LogItem)
-		entry.Position, _ = l.file.Seek(0, os.SEEK_CUR)
-		switch n, err := entry.readFromFile(r); err {
-		case io.EOF:
-				
-			return nil
-		case nil:
-			
-			if entry.Index > l.initialIndex {
-				// Append entry.
-				fmt.Println(entry.Command)
-				l.entries = append(l.entries, entry)
-				if entry.Index <= l.commitIndex {
-					//command, err := newCommand(entry.CommandName(), entry.Command())
-					//if err != nil {
-					//	continue
-					//}
-					//l.ApplyFunc(entry, command)  function to apply
-				}
-			}
+func (l *raftLog) containsEntry(index uint64, term uint64) bool {
+	entry := l.getEntry(index)
+	return (entry != nil && entry.Term == term)
+}
 
-			
-			readBytes += int64(n)
+func (l *raftLog) getEntry(index uint64) *LogItem {
+	l.RLock()
+	defer l.RUnlock()
 
-		default:
-			if err = l.file.Truncate(readBytes); err != nil {
-				return errors.New(fmt.Sprintf("raft.Log: Unable to recover: %v", err))
-			}
-			return err
-
-		}
+	if index <= 0 || index > (uint64(len(l.entries))) {
+		return nil
 	}
+	return l.entries[index-1]
+}
 
-	return nil
+func (l *raftLog) readFirst() error {
+
+	iter := l.db.NewIterator(nil, nil)
+	for iter.Next() {
+		entry := new(LogItem)
+		value := iter.Value()
+		b := bytes.NewBufferString(string(value))
+		dec := gob.NewDecoder(b)
+
+		err := dec.Decode(entry)
+		if err != nil {
+			panic(fmt.Sprintf("decode:", err))
+		}
+
+		if entry.Index > 0 {
+			// Append entry.
+			fmt.Println(entry.Command)
+			l.entries = append(l.entries, entry)
+			if entry.Index <= l.commitIndex {
+				//command, err := newCommand(entry.CommandName(), entry.Command())
+				//if err != nil {
+				//	continue
+				//}
+				//l.ApplyFunc(entry, command)  function to apply
+			}
+		}
+
+	}
+	iter.Release()
+	err := iter.Error()
+	return err
 }
 
 func (l *raftLog) entriesAfter(index uint64) ([]*LogItem, uint64) {
 	l.RLock()
 	defer l.RUnlock()
 
-	if index < l.initialIndex {
-		fmt.Println("log.entriesAfter.before: ", index, " ", l.initialIndex)
+	if index < 0 {
+		fmt.Println("log.entriesAfter.before: ", index)
 		return nil, 0
 	}
-	if index > (uint64(len(l.entries)) + l.initialIndex) {
+	if index > (uint64(len(l.entries))) {
 		panic(fmt.Sprintf("raft: Index is beyond end of log: %v %v", len(l.entries), index))
 	}
 
@@ -174,35 +172,7 @@ func (l *raftLog) lastTermWithOutLock() uint64 {
 
 }
 
-func (e *LogItem) readFromFile(r io.Reader) (int, error) {
-	header := make([]byte, 24)
-	var n int
-	if n, err := r.Read(header); err != nil {
-		return n, err
-	}
-
-	command := make([]byte, binary.LittleEndian.Uint32(header[20:24]))
-
-	if n, err := r.Read(command); err != nil {
-		return n, err
-	}
-
-	crc := binary.LittleEndian.Uint32(header[:4])
-
-	check := crc32.NewIEEE()
-	check.Write(header[4:])
-	check.Write(command)
-
-	if crc != check.Sum32() {
-		return 0, errChecksumInvalid
-	}
-	e.Term = binary.LittleEndian.Uint64(header[4:12])
-	e.Index = binary.LittleEndian.Uint64(header[12:20])
-	e.Command = command
-
-	return n, nil
-}
-func (l *raftLog) discardUpto(index, term uint64) error {
+func (l *raftLog) discard(index, term uint64) error {
 	l.Lock()
 	defer l.Unlock()
 
@@ -214,8 +184,6 @@ func (l *raftLog) discardUpto(index, term uint64) error {
 	}
 
 	if index == 0 {
-		//l.file.Truncate(0)
-		//l.file.Seek(0, os.SEEK_SET)
 		for pos := 0; pos < len(l.entries); pos++ {
 
 			if l.entries[pos].committed != nil {
@@ -228,22 +196,25 @@ func (l *raftLog) discardUpto(index, term uint64) error {
 		return nil
 	} else {
 		// Do not truncate if the entry at index does not have the matching term.
-		entry := l.entries[index-l.initialIndex-1]
+		entry := l.entries[index-1]
 		if len(l.entries) > 0 && entry.Term != term {
-			//debugln("log.truncate.termMismatch")
 			return errors.New(fmt.Sprintf("raft.Log: Entry at index does not have matching term (%v): (IDX=%v, TERM=%v)", entry.Term, index, term))
 		}
 
 		// Otherwise truncate up to the desired entry.
-		if index < l.initialIndex+uint64(len(l.entries)) {
-			//debugln("log.truncate.finish")
-			position := l.entries[index-l.initialIndex].Position
-			l.file.Truncate(position)
-			l.file.Seek(position, os.SEEK_SET)
+		if index < uint64(len(l.entries)) {
+			buf := make([]byte, 8)
 
 			// notify clients if this node is the previous leader
-			for i := index - l.initialIndex; i < uint64(len(l.entries)); i++ {
+			for i := index; i < uint64(len(l.entries)); i++ {
 				entry := l.entries[i]
+				binary.LittleEndian.PutUint64(buf, entry.Index)
+
+				err := l.db.Delete(buf, nil)
+				if err != nil {
+					panic("entry not exist")
+				}
+
 				if entry.committed != nil {
 					entry.committed <- false
 					close(entry.committed)
@@ -251,48 +222,10 @@ func (l *raftLog) discardUpto(index, term uint64) error {
 				}
 			}
 
-			l.entries = l.entries[0 : index-l.initialIndex]
+			l.entries = l.entries[0:index]
 		}
 	}
 
-	/*var pos uint64
-	pos = 0
-	for ; pos < uint64(len(l.entries)); pos++ {
-		if l.entries[pos].Index < index {
-			continue
-		}
-		if l.entries[pos].Index > index {
-			return errWrongIndex
-		}
-		if l.entries[pos].Index != index {
-			log.Println("not <, not >, but somehow !=")
-		}
-		if l.entries[pos].Term != term {
-			return errWrongTerm
-		}
-		break
-	}
-
-	if pos < l.commitIndex {
-		log.Println("index >= commitIndex, but pos < commitIndex")
-	}
-
-	truncateFrom := pos + 1
-	if truncateFrom >= uint64(len(l.entries)) {
-		return nil // nothing to truncate
-	}
-
-	for pos = truncateFrom; pos < uint64(len(l.entries)); pos++ {
-
-		if l.entries[pos].committed != nil {
-			l.entries[pos].committed <- false
-			close(l.entries[pos].committed)
-			l.entries[pos].committed = nil
-		}
-	}
-
-	l.entries = l.entries[:truncateFrom]
-	*/
 	return nil
 }
 
@@ -326,30 +259,15 @@ func (l *raftLog) appendEntries(entries []*LogItem) error {
 	l.Lock()
 	defer l.Unlock()
 
-	startPosition, _ := l.file.Seek(0, os.SEEK_CUR)
-
-	w := bufio.NewWriter(l.file)
-
-	var size int64
-	var err error
 	// Append each entry but exit if we hit an error.
 	for i := range entries {
 
-		entries[i].Position = startPosition
-
-		if size, err = entries[i].writeToFile(w); err != nil {
+		if err := entries[i].writeToDB(l.db); err != nil {
 			return err
-		}else{
-			l.entries = append(l.entries, entries[i])		
+		} else {
+			l.entries = append(l.entries, entries[i])
 		}
 
-		startPosition += size
-	}
-	w.Flush()
-	err = l.sync()
-
-	if err != nil {
-		panic(err)
 	}
 
 	return nil
@@ -370,24 +288,13 @@ func (l *raftLog) appendEntry(entry *LogItem) error {
 			return errIndexIsSmall
 		}
 	}
-	position, _ := l.file.Seek(0, os.SEEK_CUR)
-
-	entry.Position = position
-
-	// Write to storage.
-	if _, err := entry.writeToFile(l.file); err != nil {
+	if err := entry.writeToDB(l.db); err != nil {
 		return err
 	}
-
-	// Append to entries list if stored on disk.
 	l.entries = append(l.entries, entry)
 
 	return nil
 
-}
-
-func (l *raftLog) sync() error {
-	return l.file.Sync()
 }
 
 func (l *raftLog) updateCommitIndex(index uint64) {
@@ -403,9 +310,9 @@ func (l *raftLog) commitTo(commitIndex uint64) error {
 	l.Lock()
 	defer l.Unlock()
 
-	if commitIndex > l.initialIndex+uint64(len(l.entries)) {
+	if commitIndex > uint64(len(l.entries)) {
 		fmt.Printf("raft.Log: Commit index", commitIndex, "set back to \n", len(l.entries))
-		commitIndex = l.initialIndex + uint64(len(l.entries))
+		commitIndex = uint64(len(l.entries))
 	}
 	if commitIndex < l.commitIndex {
 		return nil
@@ -415,7 +322,7 @@ func (l *raftLog) commitTo(commitIndex uint64) error {
 		panic("pending commit pos < 0")
 	}
 	for i := l.commitIndex + 1; i <= commitIndex; i++ {
-		entryIndex := i - 1 - l.initialIndex
+		entryIndex := i - 1
 		entry := l.entries[entryIndex]
 
 		// Update commit index.
@@ -434,31 +341,31 @@ func (l *raftLog) commitTo(commitIndex uint64) error {
 	return nil
 }
 
-func (e *LogItem) writeToFile(w io.Writer) (int64, error) {
-	if len(e.Command) <= 0 {
-		return 0,errNoCommand
-	}
-	if e.Index <= 0 {
-		return 0,errWrongIndex
-	}
-	if e.Term <= 0 {
-		return 0,errWrongTerm
+func (l *raftLog) commitInfo() (index uint64, term uint64) {
+	l.RLock()
+	defer l.RUnlock()
+	if l.commitIndex == 0 {
+		return 0, 0
 	}
 
-	commandSize := len(e.Command)
-	buf := make([]byte, 24+commandSize)
+	if l.commitIndex == 0 {
+		return 0, 0
+	}
 
-	binary.LittleEndian.PutUint64(buf[4:12], e.Term)
-	binary.LittleEndian.PutUint64(buf[12:20], e.Index)
-	binary.LittleEndian.PutUint32(buf[20:24], uint32(commandSize))
+	entry := l.entries[l.commitIndex-1]
+	return entry.Index, entry.Term
+}
 
-	copy(buf[24:], e.Command)
+func (e *LogItem) writeToDB(db *leveldb.DB) error {
+	var network bytes.Buffer
+	enc := gob.NewEncoder(&network)
+	err := enc.Encode(e)
+	if err != nil {
+		panic("gob error: " + err.Error())
+	}
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, e.Index)
+	err = db.Put(buf, []byte(network.String()), nil)
+	return err
 
-	binary.LittleEndian.PutUint32(
-		buf[0:4],
-		crc32.ChecksumIEEE(buf[4:]),
-	)
-
-	size, err := w.Write(buf)
-	return int64(size), err
 }

@@ -28,7 +28,7 @@ type appendEntriesResponse struct {
 
 type voteRequest struct {
 	Term uint64
-	//id of the candidate	
+	//id of the candidate
 	CandidateID  uint64
 	LastLogIndex uint64
 	LastLogTerm  uint64
@@ -48,17 +48,14 @@ type CommandTuple struct {
 }
 
 type LogItem struct {
-	Index   uint64
-	Term    uint64 // when received by leader
-	Command []byte
-	Position int64
+	Index     uint64
+	Term      uint64 // when received by leader
+	Command   []byte
 	committed chan bool
 }
 
-
 type uint64Slice []uint64
 
-
-func (p uint64Slice) Len() int { return len(p) }
+func (p uint64Slice) Len() int           { return len(p) }
 func (p uint64Slice) Less(i, j int) bool { return p[i] > p[j] }
-func (p uint64Slice) Swap(i, j int) { p[i], p[j] = p[j], p[i] }
+func (p uint64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }

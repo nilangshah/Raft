@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/nilangshah/Raft/cluster"
-	"os"
 	"log"
 	"math"
 	"math/rand"
+	"os"
 	"sort"
 	"strconv"
 	"sync"
@@ -49,7 +49,7 @@ var (
 	// If follower do not hear from leader during [T-2T] time election timer will hit
 	// follower will become candidate and start new election
 	//If candidate do not hear from followers during [T-2T] time election timer will hit
-	// candidate will update term and start a fresh election 
+	// candidate will update term and start a fresh election
 	MinimumElectionTimeoutMs int32 = 250
 	//max election time out -  2T milliseconds
 	maximumElectionTimeoutMs = 2 * MinimumElectionTimeoutMs
@@ -105,7 +105,7 @@ func (s *protectedBool) Set(value bool) {
 // Replicator is responsible for Raft leader election and Raft log replication
 // Replicator uses cluster package for commnication to other replicator instances.
 type Replicator interface {
-	// Term of this replicator 
+	// Term of this replicator
 	Term() uint64
 	// Is this replicator leader
 	IsLeader() bool
@@ -194,7 +194,7 @@ type replicator struct {
 	vote            uint64             // vote given to which sevrer
 	electionTick    <-chan time.Time   // election timer
 	state           *protectedString   //state can be follower, candidate, leader
-	running         *protectedBool     //servrer is start or stop 
+	running         *protectedBool     //servrer is start or stop
 	leader          uint64             //id of leader
 	isLeader        *protectedBool     //I am leader or not
 	quit            chan chan struct{} // stopping chan
@@ -215,7 +215,7 @@ func init() {
 }
 
 // Create replicator object and return replicator interface for it
-func New(server cluster.Server, file *os.File, fileName string) Replicator { // returns replicator interface
+func New(server cluster.Server, dirName string) Replicator { // returns replicator interface
 	//latestTerm := uint64(1)
 	//var logger *log.Logger
 	///////////////////////////////
@@ -229,9 +229,10 @@ func New(server cluster.Server, file *os.File, fileName string) Replicator { // 
 
 		log.SetOutput(f)
 	}
+
 	//}
-	//////////////////////////////	
-	raftlog := newRaftLog(file)
+	//////////////////////////////
+	raftlog := newRaftLog(dirName)
 	latestTerm := raftlog.lastTerm()
 	no_of_servers = server.No_Of_Peers()
 	quorum = ((no_of_servers - 1) / 2) + 1
@@ -521,14 +522,13 @@ func (r *replicator) leaderSelect() {
 
 				var indices []uint64
 				indices = append(indices, r.log.currentIndex())
-					for _, i := range nIndex.m {
-						indices = append(indices,i)
-					}
+				for _, i := range nIndex.m {
+					indices = append(indices, i)
+				}
 
 				sort.Sort(uint64Slice(indices))
 				commitIndex := indices[quorum-1]
 				committedIndex := r.log.commitIndex
-
 
 				peersBestIndex := commitIndex
 				ourLastIndex := r.log.lastIndex()
@@ -541,7 +541,6 @@ func (r *replicator) leaderSelect() {
 				}
 				if commitIndex > committedIndex {
 					// leader needs to do a fsync before committing log entries
-					r.log.sync()
 					if err := r.log.commitTo(peersBestIndex); err != nil {
 						r.logger.Printf("commitTo(%d): %s", peersBestIndex, err)
 						continue // oh well, next time?
@@ -551,8 +550,6 @@ func (r *replicator) leaderSelect() {
 						go func() { replicate <- struct{}{} }()
 					}
 				}
-
-
 
 			}
 		case t := <-r.s.Inbox():
@@ -638,7 +635,7 @@ func (r *replicator) handleAppendEntries(res appendEntries) (*appendEntriesRespo
 	r.resetElectionTimeout()
 
 	// Reject if log doesn't contain a matching previous entry
-	if err := r.log.discardUpto(res.PrevLogIndex, res.PrevLogTerm); err != nil {
+	if err := r.log.discard(res.PrevLogIndex, res.PrevLogTerm); err != nil {
 		//r.logger.Println("all notgood")
 		return &appendEntriesResponse{
 			Term:    r.term,
@@ -664,9 +661,8 @@ func (r *replicator) handleAppendEntries(res appendEntries) (*appendEntriesRespo
 
 	}
 
-	
 	if res.CommitIndex > 0 && res.CommitIndex > r.log.getCommitIndex() {
-		r.logger.Println("commit to",res.CommitIndex )
+		r.logger.Println("commit to", res.CommitIndex)
 		if err := r.log.commitTo(res.CommitIndex); err != nil {
 			return &appendEntriesResponse{
 				Term:    r.term,
@@ -756,7 +752,7 @@ func (r *replicator) candidateSelect() {
 			case voteResponse:
 				res := t.Msg.(voteResponse)
 
-				//r.responseVoteChan <- t.msg.Response	
+				//r.responseVoteChan <- t.msg.Response
 				if res.Term > r.term {
 					if debug {
 						r.logger.Printf("got vote from future term (%d>%d); abandoning election\n", res.Term, r.term)
@@ -885,8 +881,8 @@ func (r *replicator) followerSelect() {
 						r.logger.Printf("discovered Leader %d", res.LeaderId)
 					}
 				}
-				if len(res.Entries)>0{
-				r.logger.Println("append ",len(res.Entries),"commit index",r.log.getCommitIndex() )
+				if len(res.Entries) > 0 {
+					r.logger.Println("append ", len(res.Entries), "commit index", r.log.getCommitIndex())
 				}
 				resp, stepDown := r.handleAppendEntries(res)
 				r.s.Outbox() <- &cluster.Envelope{Pid: int(res.LeaderId), Msg: resp}
@@ -914,7 +910,7 @@ func (r *replicator) followerSelect() {
 	}
 }
 
-// give vote 
+// give vote
 func (r *replicator) handleRequestVote(req voteRequest) (*voteResponse, bool) {
 	if req.Term < r.term {
 		return &voteResponse{
