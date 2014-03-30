@@ -69,7 +69,7 @@ func TestElection_1(t *testing.T) {
 	}
 	a := 0
 	select {
-	case <-time.After(3 * time.Second):
+	case <-time.After(1 * time.Second):
 
 	}
 	for j := 0; j < 5; j = j + 2 {

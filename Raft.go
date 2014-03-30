@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"github.com/nilangshah/Raft/cluster"
-	"io"
+	"os"
 	"log"
 	"math"
 	"math/rand"
-	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -215,7 +215,7 @@ func init() {
 }
 
 // Create replicator object and return replicator interface for it
-func New(server cluster.Server, store io.ReadWriter, fileName string) Replicator { // returns replicator interface
+func New(server cluster.Server, file *os.File, fileName string) Replicator { // returns replicator interface
 	//latestTerm := uint64(1)
 	//var logger *log.Logger
 	///////////////////////////////
@@ -231,7 +231,7 @@ func New(server cluster.Server, store io.ReadWriter, fileName string) Replicator
 	}
 	//}
 	//////////////////////////////	
-	raftlog := newRaftLog(store)
+	raftlog := newRaftLog(file)
 	latestTerm := raftlog.lastTerm()
 	no_of_servers = server.No_Of_Peers()
 	quorum = ((no_of_servers - 1) / 2) + 1
@@ -349,7 +349,6 @@ func (r replicator) flush(id int, ni *nextIndex, timeout time.Duration) error {
 
 		case appendEntriesResponse:
 			resp := t.Msg.(appendEntriesResponse)
-			r.logger.Println(resp)
 			if resp.Term > currentTerm {
 				return errDeposed
 			}
@@ -484,7 +483,7 @@ func (r *replicator) leaderSelect() {
 			// Append the command to our (leader) log
 			r.logger.Println("got command, appending", r.term)
 			currentTerm := r.term
-			entry := LogItem{
+			entry := &LogItem{
 				Index:     r.log.lastIndex() + 1,
 				Term:      currentTerm,
 				Command:   cmd.Command,
@@ -503,7 +502,7 @@ func (r *replicator) leaderSelect() {
 				r.log.lastTerm(),
 			)
 
-			//go func() { replicate <- struct{}{} }()
+			go func() { replicate <- struct{}{} }()
 			//cmd.Err <- nil
 
 		case <-replicate:
@@ -517,9 +516,21 @@ func (r *replicator) leaderSelect() {
 				r.leader = unknownLeader
 				return
 			}
-			//r.logger.Println(successes, ":", quorum)
-			if successes >= quorum {
-				peersBestIndex := nIndex.bestIndex()
+			r.logger.Println(successes)
+			if successes >= quorum-1 {
+
+				var indices []uint64
+				indices = append(indices, r.log.currentIndex())
+					for _, i := range nIndex.m {
+						indices = append(indices,i)
+					}
+
+				sort.Sort(uint64Slice(indices))
+				commitIndex := indices[quorum-1]
+				committedIndex := r.log.commitIndex
+
+
+				peersBestIndex := commitIndex
 				ourLastIndex := r.log.lastIndex()
 				ourCommitIndex := r.log.getCommitIndex()
 				if peersBestIndex > ourLastIndex {
@@ -528,16 +539,21 @@ func (r *replicator) leaderSelect() {
 					r.state.Set(follower)
 					return
 				}
-				if peersBestIndex > ourCommitIndex {
+				if commitIndex > committedIndex {
+					// leader needs to do a fsync before committing log entries
+					r.log.sync()
 					if err := r.log.commitTo(peersBestIndex); err != nil {
 						r.logger.Printf("commitTo(%d): %s", peersBestIndex, err)
 						continue // oh well, next time?
 					}
 					if r.log.getCommitIndex() > ourCommitIndex {
 						r.logger.Printf("after commitTo(%d), commitIndex=%d -- queueing another flush", peersBestIndex, r.log.getCommitIndex())
-						//go func() { replicate <- struct{}{} }()
+						go func() { replicate <- struct{}{} }()
 					}
 				}
+
+
+
 			}
 		case t := <-r.s.Inbox():
 
@@ -648,19 +664,9 @@ func (r *replicator) handleAppendEntries(res appendEntries) (*appendEntriesRespo
 
 	}
 
-	// Commit up to the commit index.
-	//
-	// < ptrb> ongardie: if the new leader sends a 0-entry appendEntries
-	// with lastIndex=5 commitIndex=4, to a follower that has lastIndex=5
-	// commitIndex=5 -- in my impl, this fails, because commitIndex is too
-	// small. shouldn't be?
-	// <@ongardie> ptrb: i don't think that should fail
-	// <@ongardie> there are 4 ways an appendEntries request can fail: (1)
-	// network drops packet (2) caller has stale term (3) would leave gap in
-	// the recipient's log (4) term of entry preceding the new entries doesn't
-	// match the term at the same index on the recipient
-	//
+	
 	if res.CommitIndex > 0 && res.CommitIndex > r.log.getCommitIndex() {
+		r.logger.Println("commit to",res.CommitIndex )
 		if err := r.log.commitTo(res.CommitIndex); err != nil {
 			return &appendEntriesResponse{
 				Term:    r.term,
@@ -879,7 +885,9 @@ func (r *replicator) followerSelect() {
 						r.logger.Printf("discovered Leader %d", res.LeaderId)
 					}
 				}
-				//r.logger.Println("leader msg came", res.LeaderId)
+				if len(res.Entries)>0{
+				r.logger.Println("append ",len(res.Entries),"commit index",r.log.getCommitIndex() )
+				}
 				resp, stepDown := r.handleAppendEntries(res)
 				r.s.Outbox() <- &cluster.Envelope{Pid: int(res.LeaderId), Msg: resp}
 				if debug {

@@ -15,7 +15,7 @@ type appendEntries struct {
 	LeaderId     uint64
 	PrevLogIndex uint64
 	PrevLogTerm  uint64
-	Entries      []LogItem
+	Entries      []*LogItem
 	CommitIndex  uint64
 }
 
@@ -51,6 +51,14 @@ type LogItem struct {
 	Index   uint64
 	Term    uint64 // when received by leader
 	Command []byte
-
+	Position int64
 	committed chan bool
 }
+
+
+type uint64Slice []uint64
+
+
+func (p uint64Slice) Len() int { return len(p) }
+func (p uint64Slice) Less(i, j int) bool { return p[i] > p[j] }
+func (p uint64Slice) Swap(i, j int) { p[i], p[j] = p[j], p[i] }
