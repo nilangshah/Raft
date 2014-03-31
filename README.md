@@ -22,7 +22,7 @@ TODO
 ====
 
 * ~~Leader election~~ Done
-* Log replication 
+* ~~Log replication~~ Done
 * ~~Basic unit tests~~ Done
 * ~~Tcp transport~~ Done
 * Configuration changes
@@ -32,7 +32,7 @@ TODO
     
 Usage
 ===== 
-[![Build Status](https://travis-ci.org/nilangshah/Raft.png?branch=master)](https://travis-ci.org/nilangshah/Raft)
+
 
 * We need to setup zmq 4.0.3 first
  * sudo apt-get install autoconf
