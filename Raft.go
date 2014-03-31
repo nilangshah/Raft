@@ -50,7 +50,7 @@ var (
 	// follower will become candidate and start new election
 	//If candidate do not hear from followers during [T-2T] time election timer will hit
 	// candidate will update term and start a fresh election
-	MinimumElectionTimeoutMs int32 = 250
+	MinimumElectionTimeoutMs int32 = 300
 	//max election time out -  2T milliseconds
 	maximumElectionTimeoutMs = 2 * MinimumElectionTimeoutMs
 )
@@ -149,22 +149,16 @@ func (r replicator) Term() uint64 {
 
 //return whether server is leader or not
 func (r replicator) IsLeader() bool {
-	r.isLeader.RLock()
-	defer r.isLeader.RUnlock()
 	return r.isLeader.Get()
 }
 
 func (r replicator) IsRunning() bool {
-	r.running.RLock()
-	defer r.running.RUnlock()
 	return r.running.Get()
 }
 
 //set server leader status
 func (r replicator) IsLeaderSet(val bool) {
-	r.isLeader.Lock()
-	defer r.isLeader.Unlock()
-	r.isLeader.value = val
+	r.isLeader.Set(val)
 }
 
 //start the server
@@ -219,18 +213,19 @@ func New(server cluster.Server, dirName string) Replicator { // returns replicat
 	//latestTerm := uint64(1)
 	//var logger *log.Logger
 	///////////////////////////////
-	//if debug {
-	logfile := os.Getenv("GOPATH") + "/src/github.com/nilangshah/Raft/log" + strconv.Itoa(server.Pid())
-	f, err := os.OpenFile(logfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		//t.Fatalf("error opening file: %v", err)
-	} else {
-		//defer f.Close()
+	var f *os.File
+	if debug {
+		logfile := os.Getenv("GOPATH") + "/src/github.com/nilangshah/Raft/log" + strconv.Itoa(server.Pid())
+		f, err := os.OpenFile(logfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			panic(fmt.Sprintf("error opening file: %v", err))
+		} else {
+			defer f.Close()
 
-		log.SetOutput(f)
+			log.SetOutput(f)
+		}
+
 	}
-
-	//}
 	//////////////////////////////
 	raftlog := newRaftLog(dirName)
 	latestTerm := raftlog.lastTerm()
@@ -252,14 +247,13 @@ func New(server cluster.Server, dirName string) Replicator { // returns replicat
 		command_inchan:  make(chan *LogItem),
 		command_outchan: make(chan interface{}),
 	}
-	for i := range cluster.Jsontype.Object.Servers {
-		if cluster.Jsontype.Object.Servers[i].Id == r.s.Pid() {
-			r.term = cluster.Jsontype.Object.Servers[i].Term
-			break
-		}
+
+	if debug {
+		r.logger.Println(r.term)
 	}
-	r.term = latestTerm
-	//r.logger.Println(r.term)
+	r.log.ApplyFunc = func(e *LogItem) {
+		r.command_inchan <- e
+	}
 	r.resetElectionTimeout()
 	return r
 }

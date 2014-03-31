@@ -22,7 +22,7 @@ var (
 
 type raftLog struct {
 	sync.RWMutex
-	ApplyFunc   func(*LogItem) (interface{}, error)
+	ApplyFunc   func(*LogItem)
 	db          *leveldb.DB
 	entries     []*LogItem
 	commitIndex uint64
@@ -106,7 +106,7 @@ func (l *raftLog) readFirst() error {
 				//if err != nil {
 				//	continue
 				//}
-				//l.ApplyFunc(entry, command)  function to apply
+				l.ApplyFunc(entry)
 			}
 		}
 

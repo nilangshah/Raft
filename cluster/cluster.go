@@ -29,7 +29,6 @@ type ObjectType struct {
 type ServerInfo struct {
 	Id   int
 	Host string
-	Term uint64
 }
 
 type Envelope struct {
@@ -61,7 +60,7 @@ type Server interface {
 	// the channel to receive messages from other peers.
 	Inbox() chan *Envelope
 
-	//get the no of peers 
+	//get the no of peers
 	No_Of_Peers() int
 }
 
