@@ -1,0 +1,31 @@
+<Jsonobject>
+	<Object>
+		<Servers>
+			<Id>1</Id>
+			<Host>127.0.0.1:11212</Host>
+		</Servers>
+			
+		<Servers>
+			<Id>2</Id>
+			<Host>127.0.0.1:11213</Host>
+		</Servers>
+		
+		<Servers>
+			<Id>3</Id>
+			<Host>127.0.0.1:11214</Host>
+		</Servers>
+
+		<Servers>
+			<Id>4</Id>
+			<Host>127.0.0.1:11215</Host>
+		</Servers>
+		
+		<Servers>
+			<Id>5</Id>
+			<Host>127.0.0.1:11216</Host>
+		</Servers>
+		
+		<No_of_servers>5</No_of_servers>
+	</Object>
+</Jsonobject>
+

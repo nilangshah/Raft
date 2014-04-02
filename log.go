@@ -29,6 +29,7 @@ type raftLog struct {
 	initialTerm uint64
 }
 
+// create new log
 func newRaftLog(dbPath string) *raftLog {
 
 	db, err := leveldb.OpenFile(dbPath, nil)
@@ -41,10 +42,11 @@ func newRaftLog(dbPath string) *raftLog {
 		commitIndex: 0,
 		initialTerm: 0,
 	}
-	l.ReadFirst()
+	l.FirstRead()
 	return l
 }
 
+//Returnt he current log index
 func (l *raftLog) currentIndex() uint64 {
 	l.RLock()
 	defer l.RUnlock()
@@ -68,11 +70,13 @@ func (l *raftLog) close() {
 	l.entries = make([]*LogItem, 0)
 }
 
+//Does log contains the retry with perticular index and term
 func (l *raftLog) containsEntry(index uint64, term uint64) bool {
 	entry := l.getEntry(index)
 	return (entry != nil && entry.Term == term)
 }
 
+//get perticular entry by index
 func (l *raftLog) getEntry(index uint64) *LogItem {
 	l.RLock()
 	defer l.RUnlock()
@@ -83,7 +87,8 @@ func (l *raftLog) getEntry(index uint64) *LogItem {
 	return l.entries[index-1]
 }
 
-func (l *raftLog) ReadFirst() error {
+//read all enteries from disk when log intialized
+func (l *raftLog) FirstRead() error {
 
 	iter := l.db.NewIterator(nil, nil)
 	count := 0
@@ -101,30 +106,24 @@ func (l *raftLog) ReadFirst() error {
 
 		if entry.Index > 0 {
 			// Append entry.
-			//fmt.Println("commited entries: ",l.commitIndex)
 			l.entries = append(l.entries, entry)
 			if entry.Index <= l.commitIndex {
-				//command, err := newCommand(entry.CommandName(), entry.Command())
-				//if err != nil {
-				//	continue
-				//}
-				//l.ApplyFunc(entry)
+				l.ApplyFunc(entry)
 			}
 		}
 
 	}
-	fmt.Println("read", count, "enteries successfully")
 	iter.Release()
 	err := iter.Error()
 	return err
 }
 
+//It will return the entries after the given index
 func (l *raftLog) entriesAfter(index uint64, maxLogEntriesPerRequest uint64) ([]*LogItem, uint64) {
 	l.RLock()
 	defer l.RUnlock()
 
 	if index < 0 {
-		fmt.Println("log.entriesAfter.before: ", index)
 		return nil, 0
 	}
 	if index > (uint64(len(l.entries))) {
@@ -144,15 +143,17 @@ func (l *raftLog) entriesAfter(index uint64, maxLogEntriesPerRequest uint64) ([]
 	if len(a) == 0 {
 		return []*LogItem{}, lastTerm
 	}
+	//if entries are less then max limit then return all entries
 	if uint64(len(a)) < maxLogEntriesPerRequest {
-		// Determine the term at the given entry and return a subslice.
 		return closeResponseChannels(a), lastTerm
 	} else {
+		//otherwise return only max no of enteries premitted
 		return a[:maxLogEntriesPerRequest], lastTerm
 	}
 
 }
 
+//close the response channel of entries store on disk (leveldb)
 func closeResponseChannels(a []*LogItem) []*LogItem {
 	stripped := make([]*LogItem, len(a))
 	for i, entry := range a {
@@ -166,6 +167,7 @@ func closeResponseChannels(a []*LogItem) []*LogItem {
 	return stripped
 }
 
+//Return the last log entry term
 func (l *raftLog) lastTerm() uint64 {
 	l.RLock()
 	defer l.RUnlock()
@@ -180,6 +182,7 @@ func (l *raftLog) lastTermWithOutLock() uint64 {
 
 }
 
+//Remove the enteries which are not commited
 func (l *raftLog) discard(index, term uint64) error {
 	l.Lock()
 	defer l.Unlock()
@@ -203,13 +206,13 @@ func (l *raftLog) discard(index, term uint64) error {
 		l.entries = []*LogItem{}
 		return nil
 	} else {
-		// Do not truncate if the entry at index does not have the matching term.
+		// Do not discard if the entry at index does not have the matching term.
 		entry := l.entries[index-1]
 		if len(l.entries) > 0 && entry.Term != term {
 			return errors.New(fmt.Sprintf("raft.Log: Entry at index does not have matching term (%v): (IDX=%v, TERM=%v)", entry.Term, index, term))
 		}
 
-		// Otherwise truncate up to the desired entry.
+		// Otherwise discard up to the desired entry.
 		if index < uint64(len(l.entries)) {
 			buf := make([]byte, 8)
 
@@ -237,6 +240,7 @@ func (l *raftLog) discard(index, term uint64) error {
 	return nil
 }
 
+//Return lastest commit index
 func (l *raftLog) getCommitIndex() uint64 {
 	l.RLock()
 	defer l.RUnlock()
@@ -248,6 +252,7 @@ func (l *raftLog) getCommitIndexWithOutLock() uint64 {
 
 }
 
+//Return lastlog entry index
 func (l *raftLog) lastIndex() uint64 {
 	l.RLock()
 	defer l.RUnlock()
@@ -281,6 +286,7 @@ func (l *raftLog) appendEntries(entries []*LogItem) error {
 	return nil
 }
 
+// Append entry will append entry into in-memory log as well as will write on disk(for us leveldb)
 func (l *raftLog) appendEntry(entry *LogItem) error {
 	l.Lock()
 	defer l.Unlock()
@@ -288,7 +294,6 @@ func (l *raftLog) appendEntry(entry *LogItem) error {
 	if len(l.entries) > 0 {
 		lastTerm := l.lastTermWithOutLock()
 		if entry.Term < lastTerm {
-			fmt.Println(entry.Term, lastTerm)
 			return errTermIsSmall
 		}
 		lastIndex := l.lastIndexWithOutLock()
@@ -305,6 +310,7 @@ func (l *raftLog) appendEntry(entry *LogItem) error {
 
 }
 
+//Update commit index
 func (l *raftLog) updateCommitIndex(index uint64) {
 	l.Lock()
 	defer l.Unlock()
@@ -314,12 +320,12 @@ func (l *raftLog) updateCommitIndex(index uint64) {
 
 }
 
+//Commit current log to given index
 func (l *raftLog) commitTo(commitIndex uint64) error {
 	l.Lock()
 	defer l.Unlock()
 
 	if commitIndex > uint64(len(l.entries)) {
-		fmt.Printf("raft.Log: Commit index", commitIndex, "set back to \n", len(l.entries))
 		commitIndex = uint64(len(l.entries))
 	}
 	if commitIndex < l.commitIndex {
@@ -340,9 +346,8 @@ func (l *raftLog) commitTo(commitIndex uint64) error {
 			close(entry.committed)
 			entry.committed = nil
 		} else {
-			// Decode the command.
+			//Give entry to state machine to apply
 			l.ApplyFunc(entry)
-			// Apply the changes to the state machine and store the error code.
 		}
 
 	}
@@ -350,6 +355,7 @@ func (l *raftLog) commitTo(commitIndex uint64) error {
 	return nil
 }
 
+//Get last commit information
 func (l *raftLog) commitInfo() (index uint64, term uint64) {
 	l.RLock()
 	defer l.RUnlock()
@@ -365,6 +371,7 @@ func (l *raftLog) commitInfo() (index uint64, term uint64) {
 	return entry.Index, entry.Term
 }
 
+//Write entry to leveldb
 func (e *LogItem) writeToDB(db *leveldb.DB) error {
 	var network bytes.Buffer
 	enc := gob.NewEncoder(&network)
@@ -378,3 +385,4 @@ func (e *LogItem) writeToDB(db *leveldb.DB) error {
 	return err
 
 }
+

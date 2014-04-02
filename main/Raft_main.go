@@ -90,7 +90,7 @@ func main() {
 
 	logfile := os.Getenv("GOPATH") + "/src/github.com/nilangshah/Raft/Raftlog" + strconv.Itoa(*myid)
 
-	path := GetPath() + "/src/github.com/nilangshah/Raft/cluster/config.json"
+	path := GetPath() + "/src/github.com/nilangshah/Raft/cluster/config.xml"
 	server1 = cluster.New(*myid, path)
 	replicator = Raft.New(server1, logfile)
 	replicator.Start()
