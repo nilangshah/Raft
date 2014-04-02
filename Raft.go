@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -99,6 +100,26 @@ func (s *protectedBool) Set(value bool) {
 	s.Lock()
 	defer s.Unlock()
 	s.value = value
+}
+
+func GetPath() string {
+	data := os.Environ()
+	for _, item := range data {
+		key, val := getkeyval(item)
+		if key == "GOPATH" {
+			return val
+		}
+	}
+	return ""
+}
+
+func getkeyval(item string) (key, val string) {
+	splits := strings.Split(item, "=")
+	key = splits[0]
+	newval := strings.Join(splits[1:], "=")
+	vals := strings.Split(newval, ":")
+	val = vals[0]
+	return
 }
 
 // Replicator interface
@@ -213,15 +234,14 @@ func New(server cluster.Server, dirName string) Replicator { // returns replicat
 	//var logger *log.Logger
 	///////////////////////////////
 	var f *os.File
+	var err error
 	if debug {
-		logfile := os.Getenv("GOPATH") + "/src/github.com/nilangshah/Raft/log" + strconv.Itoa(server.Pid())
-		f, err := os.OpenFile(logfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		logfile := GetPath() + "/src/github.com/nilangshah/Raft/log" + strconv.Itoa(server.Pid())
+		f, err = os.OpenFile(logfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 		if err != nil {
 			panic(fmt.Sprintf("error opening file: %v", err))
 		} else {
-			defer f.Close()
-
-			log.SetOutput(f)
+			//defer f.Close()
 		}
 
 	}
@@ -247,6 +267,7 @@ func New(server cluster.Server, dirName string) Replicator { // returns replicat
 		command_outchan: make(chan interface{}),
 	}
 
+	r.logger.Println(latestTerm)
 	r.log.ApplyFunc = func(e *LogItem) {
 		r.command_inchan <- &(e.Command)
 	}
@@ -323,7 +344,7 @@ func (ni *nextIndex) decrement(id uint64, prev uint64) (uint64, error) {
 func (r replicator) flush(id int, ni *nextIndex, timeout time.Duration) error {
 	currentTerm := r.term
 	prevLogIndex := ni.prevLogIndex(uint64(id))
-	entries, prevLogTerm := r.log.entriesAfter(prevLogIndex)
+	entries, prevLogTerm := r.log.entriesAfter(prevLogIndex, 10)
 	commitIndex := r.log.getCommitIndex()
 
 	msg := &appendEntries{Term: currentTerm, LeaderId: uint64(r.s.Pid()), PrevLogIndex: prevLogIndex,
@@ -336,7 +357,10 @@ func (r replicator) flush(id int, ni *nextIndex, timeout time.Duration) error {
 	select {
 
 	case t := <-r.s.Inbox():
-
+		//r.logger.Println(t.Pid,":::",id)
+		id = t.Pid
+		prevLogIndex = ni.prevLogIndex(uint64(id))
+		entries, prevLogTerm = r.log.entriesAfter(prevLogIndex, 10)
 		switch t.Msg.(type) {
 
 		case appendEntriesResponse:
@@ -347,28 +371,30 @@ func (r replicator) flush(id int, ni *nextIndex, timeout time.Duration) error {
 
 			if !resp.Success {
 				newPrevLogIndex, err := ni.decrement(uint64(id), prevLogIndex)
+				r.logger.Println("new index for ", id, "is", newPrevLogIndex)
 				if err != nil {
 					if debug {
-						log.Printf("flush to %v: while decrementing prevLogIndex: %s", id, err)
+						r.logger.Printf("flush to %v: while decrementing prevLogIndex: %s", id, err)
 					}
 					return err
 				}
 				if debug {
-					log.Printf("flush to %v: rejected; prevLogIndex(%v) becomes %d", id, id, newPrevLogIndex)
+					r.logger.Printf("flush to %v: rejected; prevLogIndex(%v) becomes %d", id, id, newPrevLogIndex)
 				}
 				return errappendEntriesRejected
 			}
 
 			if len(entries) > 0 {
 				newPrevLogIndex, err := ni.set(uint64(id), entries[len(entries)-1].Index, prevLogIndex)
+				r.logger.Println("new index for ", id, "is", newPrevLogIndex)
 				if err != nil {
 					if debug {
-						log.Printf("flush to %v: while moving prevLogIndex forward: %s", id, err)
+						r.logger.Printf("flush to %v: while moving prevLogIndex forward: %s", id, err)
 					}
 					return err
 				}
 				if debug {
-					log.Printf("flush to %v: accepted; prevLogIndex(%v) becomes %d", id, id, newPrevLogIndex)
+					r.logger.Printf("flush to %v: accepted; prevLogIndex(%v) becomes %d", id, id, newPrevLogIndex)
 				}
 				return nil
 			}

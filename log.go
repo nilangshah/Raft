@@ -86,7 +86,9 @@ func (l *raftLog) getEntry(index uint64) *LogItem {
 func (l *raftLog) ReadFirst() error {
 
 	iter := l.db.NewIterator(nil, nil)
+	count := 0
 	for iter.Next() {
+		count++
 		entry := new(LogItem)
 		value := iter.Value()
 		b := bytes.NewBufferString(string(value))
@@ -111,12 +113,13 @@ func (l *raftLog) ReadFirst() error {
 		}
 
 	}
+	fmt.Println("read", count, "enteries successfully")
 	iter.Release()
 	err := iter.Error()
 	return err
 }
 
-func (l *raftLog) entriesAfter(index uint64) ([]*LogItem, uint64) {
+func (l *raftLog) entriesAfter(index uint64, maxLogEntriesPerRequest uint64) ([]*LogItem, uint64) {
 	l.RLock()
 	defer l.RUnlock()
 
@@ -141,8 +144,13 @@ func (l *raftLog) entriesAfter(index uint64) ([]*LogItem, uint64) {
 	if len(a) == 0 {
 		return []*LogItem{}, lastTerm
 	}
+	if uint64(len(a)) < maxLogEntriesPerRequest {
+		// Determine the term at the given entry and return a subslice.
+		return closeResponseChannels(a), lastTerm
+	} else {
+		return a[:maxLogEntriesPerRequest], lastTerm
+	}
 
-	return closeResponseChannels(a), lastTerm
 }
 
 func closeResponseChannels(a []*LogItem) []*LogItem {
@@ -331,10 +339,10 @@ func (l *raftLog) commitTo(commitIndex uint64) error {
 			entry.committed <- true
 			close(entry.committed)
 			entry.committed = nil
-		}else{
-		// Decode the command.
-		l.ApplyFunc(entry)
-		// Apply the changes to the state machine and store the error code.
+		} else {
+			// Decode the command.
+			l.ApplyFunc(entry)
+			// Apply the changes to the state machine and store the error code.
 		}
 
 	}

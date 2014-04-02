@@ -33,28 +33,6 @@ type LeaderInfo struct {
 	Pid uint64
 }
 
-func GetPath() string {
-	data := os.Environ()
-	for _, item := range data {
-		key, val := getkeyval(item)
-		if key == "GOPATH" {
-			return val
-		}
-	}
-	return ""
-}
-
-func getkeyval(item string) (key, val string) {
-	splits := strings.Split(item, "=")
-	key = splits[0]
-	//	val = strings.Join(splits[1:], "=")
-	newval := strings.Join(splits[1:], "=")
-	vals := strings.Split(newval, ":")
-	val = vals[0]
-
-	return
-}
-
 //start 5 servers and kill randomly 3 servers and after 5 second start them..
 func TestElection_1(t *testing.T) {
 	nos = 5

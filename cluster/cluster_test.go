@@ -102,7 +102,7 @@ func TestLoad(t *testing.T) {
 	fmt.Println("test1: Generate large no of msges and broadcast them")
 	no_of_servers := 5
 	wg = new(sync.WaitGroup)
-	path := GetPath() + "/src/github.com/nilangshah/Raft/cluster/config.json"
+	path := GetPath() + "/src/github.com/nilangshah/Raft/cluster/config.xml"
 	server = make([]Server, no_of_servers)
 	for i := 1; i <= no_of_servers; i++ {
 		server[i-1] = New(i, path)

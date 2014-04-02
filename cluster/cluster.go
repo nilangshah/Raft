@@ -1,7 +1,7 @@
 package cluster
 
 import (
-	"encoding/json"
+	"encoding/xml"
 	//"fmt"
 	"bytes"
 	"encoding/gob"
@@ -15,9 +15,7 @@ const (
 	BROADCAST = -1
 )
 
-var Jsontype Jsonobject
-
-type Jsonobject struct {
+type Xmlobject struct {
 	Object ObjectType
 }
 
@@ -96,32 +94,33 @@ type serVer struct {
 }
 
 func New(myid int, fileName string) Server {
-	//fmt.Println(myid,"")
+
+	var Xmltype Xmlobject
 	file, e := ioutil.ReadFile(fileName)
 	if e != nil {
 		panic("File error: " + e.Error())
 	}
 
-	json.Unmarshal(file, &Jsontype)
+	xml.Unmarshal(file, &Xmltype)
 	s := &serVer{
 		pid:     123,
-		peers:   make([]int, len(Jsontype.Object.Servers)-1),
+		peers:   make([]int, len(Xmltype.Object.Servers)-1),
 		in:      make(chan *Envelope),
 		out:     make(chan *Envelope),
 		addr:    map[int]string{},
 		sockets: make(map[int]*zmq.Socket),
-		nop:     Jsontype.Object.No_of_servers,
+		nop:     Xmltype.Object.No_of_servers,
 	}
 
 	count := 0
-	for i := range Jsontype.Object.Servers {
-		if Jsontype.Object.Servers[i].Id == myid {
+	for i := range Xmltype.Object.Servers {
+		if Xmltype.Object.Servers[i].Id == myid {
 			s.pid = myid
 		} else {
-			s.peers[count] = Jsontype.Object.Servers[i].Id
+			s.peers[count] = Xmltype.Object.Servers[i].Id
 			count++
 		}
-		s.addr[Jsontype.Object.Servers[i].Id] = Jsontype.Object.Servers[i].Host
+		s.addr[Xmltype.Object.Servers[i].Id] = Xmltype.Object.Servers[i].Host
 
 	}
 	for i := range s.Peers() {
