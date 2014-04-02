@@ -126,14 +126,14 @@ type Replicator interface {
 
 	//Mailbox for state machine layer above to receive commands. These
 	//are guaranteed to have been replicated on a majority
-	Inbox() <-chan *LogItem
+	Inbox() <-chan *[]byte
 }
 
 func (r replicator) Outbox() chan<- interface{} {
 	return r.command_outchan
 }
 
-func (r replicator) Inbox() <-chan *LogItem {
+func (r replicator) Inbox() <-chan *[]byte {
 	return r.command_inchan
 }
 
@@ -163,10 +163,9 @@ func (r replicator) IsLeaderSet(val bool) {
 
 //start the server
 func (r *replicator) Start() {
-	if debug {
-		log.Println("server started ", r.s.Pid())
-	}
+
 	go r.loop()
+
 }
 
 // stop the server
@@ -194,7 +193,7 @@ type replicator struct {
 	quit            chan chan struct{} // stopping chan
 	log             *raftLog           //Raft log
 	logger          *log.Logger
-	command_inchan  chan *LogItem
+	command_inchan  chan *[]byte
 	command_outchan chan interface{}
 	//requestVoteChan chan requestVoteTuple
 }
@@ -229,9 +228,9 @@ func New(server cluster.Server, dirName string) Replicator { // returns replicat
 	//////////////////////////////
 	raftlog := newRaftLog(dirName)
 	latestTerm := raftlog.lastTerm()
+
 	no_of_servers = server.No_Of_Peers()
 	quorum = ((no_of_servers - 1) / 2) + 1
-
 	r := &replicator{
 		s:               server,
 		term:            latestTerm,
@@ -244,15 +243,12 @@ func New(server cluster.Server, dirName string) Replicator { // returns replicat
 		isLeader:        &protectedBool{value: false},
 		quit:            make(chan chan struct{}),
 		logger:          log.New(f, log.Prefix(), log.Flags()),
-		command_inchan:  make(chan *LogItem),
+		command_inchan:  make(chan *[]byte, 1024),
 		command_outchan: make(chan interface{}),
 	}
 
-	if debug {
-		r.logger.Println(r.term)
-	}
 	r.log.ApplyFunc = func(e *LogItem) {
-		r.command_inchan <- e
+		r.command_inchan <- &(e.Command)
 	}
 	r.resetElectionTimeout()
 	return r
@@ -334,6 +330,7 @@ func (r replicator) flush(id int, ni *nextIndex, timeout time.Duration) error {
 		PrevLogTerm: prevLogTerm,
 		Entries:     entries,
 		CommitIndex: commitIndex}
+	r.logger.Println("send entreies: ", len(entries), "to ", id)
 	r.s.Outbox() <- &cluster.Envelope{Pid: id, Msg: msg}
 
 	select {

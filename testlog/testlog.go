@@ -39,16 +39,10 @@ func main() {
 
 	for i := 0; i < 5; i++ {
 		fmt.Println("server", i, "started")
-		logfile := os.Getenv("GOPATH") + "/src/github.com/nilangshah/Raft/Raftlog/log" + strconv.Itoa(i+1)
-		f, err := os.OpenFile(logfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-		if err != nil {
-			panic(fmt.Sprintf("error opening file: %v", err))
-		} else {
-			//defer f.Close()
-
-		}
+		logfile := os.Getenv("GOPATH") + "/src/github.com/nilangshah/Raft/Raftlog" + strconv.Itoa(i+1)
+		
 		server[i] = cluster.New(i+1, path)
-		replicator[i] = Raft.New(server[i], f, path)
+		replicator[i] = Raft.New(server[i],logfile)
 		replicator[i].Start()
 	}
 	leader_id := 0

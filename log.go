@@ -41,7 +41,7 @@ func newRaftLog(dbPath string) *raftLog {
 		commitIndex: 0,
 		initialTerm: 0,
 	}
-	l.readFirst()
+	l.ReadFirst()
 	return l
 }
 
@@ -83,7 +83,7 @@ func (l *raftLog) getEntry(index uint64) *LogItem {
 	return l.entries[index-1]
 }
 
-func (l *raftLog) readFirst() error {
+func (l *raftLog) ReadFirst() error {
 
 	iter := l.db.NewIterator(nil, nil)
 	for iter.Next() {
@@ -99,14 +99,14 @@ func (l *raftLog) readFirst() error {
 
 		if entry.Index > 0 {
 			// Append entry.
-			fmt.Println(entry.Command)
+			//fmt.Println("commited entries: ",l.commitIndex)
 			l.entries = append(l.entries, entry)
 			if entry.Index <= l.commitIndex {
 				//command, err := newCommand(entry.CommandName(), entry.Command())
 				//if err != nil {
 				//	continue
 				//}
-				l.ApplyFunc(entry)
+				//l.ApplyFunc(entry)
 			}
 		}
 
@@ -331,10 +331,11 @@ func (l *raftLog) commitTo(commitIndex uint64) error {
 			entry.committed <- true
 			close(entry.committed)
 			entry.committed = nil
-		}
+		}else{
 		// Decode the command.
-
+		l.ApplyFunc(entry)
 		// Apply the changes to the state machine and store the error code.
+		}
 
 	}
 

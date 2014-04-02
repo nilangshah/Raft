@@ -17,7 +17,7 @@ func newLogItem(index uint64, term uint64, command []byte, resp chan bool) *LogI
 
 func TestLog_1(t *testing.T) {
 	path := GetPath() + "/src/github.com/nilangshah/Raft/tempDb"
-	err := os.Mkdir(path, 0777)
+	err := os.Mkdir(path, 0766)
 	if err != nil {
 		panic("unable to creat temp directory")
 	} else {
@@ -25,6 +25,9 @@ func TestLog_1(t *testing.T) {
 	}
 
 	log := newRaftLog(path)
+	log.ApplyFunc = func(e *LogItem) {
+		return
+	}
 	e := newLogItem(1, 1, []byte("log test entry 1"), nil)
 	if err := log.appendEntry(e); err != nil {
 		t.Fatalf("Unable to append: %v", err)
@@ -64,6 +67,9 @@ func TestLogContainsEntries(t *testing.T) {
 	}
 
 	log := newRaftLog(path)
+	log.ApplyFunc = func(e *LogItem) {
+		return
+	}
 	//response := make(chan bool)
 	e := newLogItem(1, 1, []byte("log test entry 1"), nil)
 	if err := log.appendEntry(e); err != nil {
@@ -110,6 +116,9 @@ func TestLogTruncate(t *testing.T) {
 	}
 
 	log := newRaftLog(path)
+	log.ApplyFunc = func(e *LogItem) {
+		return
+	}
 
 	e1 := newLogItem(1, 1, []byte("log test entry 1"), nil)
 	if err := log.appendEntry(e1); err != nil {
