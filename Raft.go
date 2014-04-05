@@ -196,6 +196,7 @@ func (r *replicator) Stop() {
 	<-q
 }
 
+//store index of all peer servers
 type nextIndex struct {
 	sync.RWMutex
 	m map[uint64]uint64 // followerId: nextIndex
@@ -341,6 +342,7 @@ func (ni *nextIndex) decrement(id uint64, prev uint64) (uint64, error) {
 	return ni.m[id], nil
 }
 
+//Replicate append entry to follower given by id
 func (r replicator) flush(id int, ni *nextIndex, timeout time.Duration) error {
 	currentTerm := r.term
 	prevLogIndex := ni.prevLogIndex(uint64(id))
@@ -425,6 +427,7 @@ func (ni *nextIndex) set(id, index, prev uint64) (uint64, error) {
 	return index, nil
 }
 
+// send append entry to all followers in parellal
 func (r *replicator) concurrentReplicate(ni *nextIndex, timeout time.Duration) (int, bool) {
 	type tuple struct {
 		id  uint64
@@ -482,7 +485,6 @@ func (r *replicator) leaderSelect() {
 	}
 	nIndex := r.newNextIndex(r.log.lastIndex()) // +1)
 	replicate := make(chan struct{})
-	//go r.listenFlush(replicate,nIndex)
 	hbeat := time.NewTicker(broadcastInterval())
 	defer hbeat.Stop()
 	go func() {

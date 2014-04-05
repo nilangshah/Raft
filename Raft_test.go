@@ -142,7 +142,7 @@ func rpc_call() (uint64, uint64, error) {
 
 func KillServer(wg *sync.WaitGroup, cmd []*exec.Cmd, j int, restart bool) {
 	path := GetPath() + "/bin/main"
-	//fmt.Println("kill leader ",j+1)
+	fmt.Println("kill leader ",j+1)
 	cmd[j].Process.Kill()
 	cmd[j].Wait()
 	wg.Done()
