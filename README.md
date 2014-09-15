@@ -21,7 +21,7 @@ Quorum is the very crucial in Raft. To win the leader election candidate must ha
 ### Replicated Log
 
 To maintain state, a log of commands is maintained.
-Each command needs to be apply to change the state of the server and tis command is idempotent and commutative. So it will not matter even if you apply it more then once.
+Each command needs to be apply to change the state of the server and this command is idempotent. So it will not matter even if you apply it more then once.
 Log replication is also based on quorum. Leader send logentry to servers and if quorum has been made then only that log entry willl be commited.
 Replicating the log under normal conditions is done by sending an `AppendEntries` from the leader to each of the other followers in the cluster.
 Each follower will append the entries from the leader through a 2-phase commit process which ensure that a majority of followers in the cluster have entries written to log.
